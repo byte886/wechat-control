@@ -14,7 +14,7 @@ compatibility: "macOS (Intel/Apple Silicon) / Windows / Linux。微信版本锁�
 - `SKILL.md`（本文件，主入口）＋ `references/`（错误处理、歧义处理、大消息量、时间解析、新号 SOP，按需读取）
 - `scripts/`（Python/shell 脚本）、`mcp-server/`（可选 MCP 服务）、`tools/silk-v3-decoder/`（SILK 语音解码）、`third-party/wx-cli/`（本人 fork 的多账号改造版，git 子模块）
 
-**开发私档（不随公开仓分发）**：`docs/`（PRD、路线图、阶段 spec、监控规划、测试用例、数据库数据字典）是"怎么开发本工具"的过程文档，含本机实测数据与个人标识，仅在维护者本机保留、已在 `.gitignore`、**不入库**。日常使用和 AI 加载都不要读它；仅维护者需要数据库表结构等开发细节时查本地 `docs/database-schema.md`。
+**开发文档 `docs/`（给人看，AI 运行时不加载）**：PRD、功能清单、路线图、阶段 spec、监控规划等设计文档随公开仓分发，便于理解设计与协作；但 AI 用本技能时**不要加载 `docs/`**（运行面只需本文件 + `references/`）。其中 `test-cases.md`（本人账号实测日志）与 `database-schema.md`（从本机库 dump 的数据字典，含个人标识）仅维护者本地保留、在 `.gitignore`、不入库；需要表结构时由维护者查本地副本。
 
 **路径约定**：命令中的 `scripts/...` 是相对技能根目录的路径，默认在技能根目录下执行；在其他目录执行时，把 `scripts/` 替换为 `~/Doubao/skills/wechat-control/scripts/`（`~` 双机自适应，不要写死用户名）。
 

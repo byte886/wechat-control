@@ -99,6 +99,10 @@ bash scripts/wechat-ui/send_message.sh "文件传输助手" "测试消息"
 wechat-control/
 ├── SKILL.md                    # AI Agent 技能文档（主文档）
 ├── README.md                   # 项目介绍（本文件）
+├── docs/                       # 设计/规划文档（给人看，AI 运行时不加载）
+│   ├── PRD.md / FEATURES.md / ROADMAP.md
+│   ├── phase2-monitor-spec.md / phase3-write-spec.md / wechat-ai-agent-spec.md
+│   └── monitoring-plan.md      # test-cases.md / database-schema.md 仅本地保留、不入库
 ├── scripts/
 │   ├── wx-monitor.py           # 群监控 + 每日总结/推荐群/飞书同步
 │   ├── realtime-monitor.py     # 新消息实时监听（daemon 自愈、重要性判定）
@@ -115,7 +119,7 @@ wechat-control/
 └── third-party/                # 本人 fork 的多账号改造版 wx-cli（git 子模块；单账号只读可用 npm 官方版）
 ```
 
-> PRD、路线图、阶段 spec、监控规划、测试用例、数据库 Schema 数据字典等开发过程文档，只在维护者本地 `docs/`（已加入 `.gitignore`，含本机实测数据与个人标识，**不随公开仓分发**）。本仓只包含运行技能所需的内容，加载边界见 [SKILL.md](SKILL.md) §0。
+> `docs/` 下的 PRD、路线图、阶段 spec、监控规划是设计/规划文档，随仓公开但 **AI 运行时不加载**；`test-cases.md`（本人实测日志）与 `database-schema.md`（本机库数据字典，含个人标识）仅维护者本地保留、已 `.gitignore`、不随仓分发。加载边界见 [SKILL.md](SKILL.md) §0。
 
 ## 📊 支持的消息类型
 
@@ -154,10 +158,15 @@ wechat-control/
 
 ## 📚 文档
 
+**运行面（AI 加载）**
 - [SKILL.md](SKILL.md) — 完整技能文档（AI Agent 必读，含文件地图与加载边界 §0）
 - [references/new-account-sop.md](references/new-account-sop.md) — 新微信号登录/多账号/daemon SOP
 - [mcp-server/README.md](mcp-server/README.md) — 可选 MCP 监控服务
-- 开发过程文档（PRD/路线图/阶段 spec/测试用例/数据库 Schema）在维护者本地 `docs/`，不随公开仓分发
+
+**设计/规划文档（给人看，公开，AI 运行时不加载，位于 `docs/`）**
+- [PRD.md](docs/PRD.md) · [FEATURES.md](docs/FEATURES.md) · [ROADMAP.md](docs/ROADMAP.md)
+- [phase2-monitor-spec.md](docs/phase2-monitor-spec.md) · [phase3-write-spec.md](docs/phase3-write-spec.md) · [wechat-ai-agent-spec.md](docs/wechat-ai-agent-spec.md) · [monitoring-plan.md](docs/monitoring-plan.md)
+- `test-cases.md`（本人实测日志）、`database-schema.md`（本机库数据字典）仅维护者本地保留，不随公开仓分发
 
 ## 🛠️ 技术栈
 

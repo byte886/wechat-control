@@ -400,7 +400,7 @@ python3 ~/Doubao/skills/wechat-control/scripts/wx-monitor.py config list
 **注意**：
 - 切换账号后必须清除旧状态，否则会漏掉新账号的历史消息或重复处理
 - 首次启动有30秒缓冲时间，会处理最近30秒内的语音
-- 监控规划见本地私档 `docs/monitoring-plan.md`（不随仓分发，见 SKILL §0）
+- 监控规划见 `docs/monitoring-plan.md`（设计文档，随仓公开但 AI 运行时不加载，见 SKILL §0）
 
 ### A.10 写操作功能验证（仅小号）
 
