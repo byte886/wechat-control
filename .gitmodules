@@ -1,0 +1,3 @@
+[submodule "third-party/wx-cli"]
+	path = third-party/wx-cli
+	url = git@github.com:byte886/wx-cli.git
