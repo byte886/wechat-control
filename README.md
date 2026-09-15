@@ -48,7 +48,7 @@
 npm install -g @jackwener/wx-cli
 wx --version            # 应输出 0.3.0 或更高
 # 注：npm 官方版仅支持单账号只读；需要主号/小号多账号切换，须用
-# third-party/wx-cli 这个 fork 从源码编译，见 SKILL.md §3.2 与 references/new-account-sop.md §A.4.2
+# third-party/wx-cli 这个 fork 从源码编译，见 references/install.md 与 references/multi-account.md
 
 # 安装 SQLCipher
 brew install sqlcipher
@@ -162,8 +162,8 @@ wechat-control/
 ## 📚 文档
 
 **运行面（AI 加载）**
-- [SKILL.md](SKILL.md) — 完整技能文档（AI Agent 必读，含文件地图与加载边界 §0）
-- [references/new-account-sop.md](references/new-account-sop.md) — 新微信号登录/多账号/daemon SOP
+- [SKILL.md](SKILL.md) — 技能主入口与路由器（AI Agent 必读，含文件地图/加载边界 §0、硬红线、命令速查、按需加载索引 §5）
+- `references/` — 按需加载的操作参考：安装与平台、命令详解、新号登记、多账号、语音链路、监控、实时监听与 daemon、错误/歧义/时间/大消息量/总结模板（**完整索引见 SKILL.md §5**）
 - [mcp-server/README.md](mcp-server/README.md) — 可选 MCP 监控服务
 
 **设计/规划文档（已脱敏、随公开仓；AI 运行时不加载，位于 `docs/`，共 7 篇）**
@@ -195,4 +195,4 @@ MIT License
 
 ---
 
-**微信版本升级提醒**：本工具硬绑定微信 4.1.8。升级微信后，数据库结构和密钥提取方式可能变化，需重新验证。新号登记、多账号切换、daemon 管理等低频操作见 [references/new-account-sop.md](references/new-account-sop.md)。
+**微信版本升级提醒**：本工具硬绑定微信 4.1.8。升级微信后，数据库结构和密钥提取方式可能变化，需重新验证。低频操作分篇见 references/：新号登记看 new-account-sop.md、多账号切换看 multi-account.md、实时监听与 daemon 看 realtime-and-daemon.md（完整索引见 SKILL.md §5）。

@@ -111,7 +111,7 @@
 ### 4.5 放弃的备选及理由
 - **实时 WebSocket 推送**：微信没有开放的推送 API，无法实现真正的实时；5-10 分钟轮询是合理的折中
 - **微信内推送**：需要操作微信界面发消息，有风控风险；先记录到需求池，后续用安全方式实现
-- **语音转文字**：~~当时判断语音文件拿不到~~ 已解决——SILK 语音 BLOB 直接存在 media_0.db 的 VoiceInfo 表，由 voice-transcribe.py（silk 解码 + FunASR 本地转写）实现，见 new-account-sop §A.7，无需第三方 API
+- **语音转文字**：~~当时判断语音文件拿不到~~ 已解决——SILK 语音 BLOB 直接存在 media_0.db 的 VoiceInfo 表，由 voice-transcribe.py（silk 解码 + FunASR 本地转写）实现，见 references/voice-pipeline.md，无需第三方 API
 - **小程序链接解析**：微信 4.1.8 不支持小程序链接展示，是版本限制，无法绕过
 
 ## 5. 测试决策
@@ -137,7 +137,7 @@
 
 - ❌ 微信内推送（发消息到微信/微信群）：有风控风险，记录到需求池，后续用安全方式实现
 - ❌ 公众号通知：需要公众号 API 权限，记录到需求池
-- ❌→✅ 语音转文字：已由 voice-monitor.py / voice-transcribe.py 实现（直读 media_0.db + 本地 ASR），见 new-account-sop §A.7
+- ❌→✅ 语音转文字：已由 voice-monitor.py / voice-transcribe.py 实现（直读 media_0.db + 本地 ASR），见 references/voice-pipeline.md
 - ❌ 视频/语音文件导出：微信需点击下载才保存到本地，且 wx-cli 不支持
 - ❌ 小程序链接解析：微信 4.1.8 版本限制
 - ❌ 自动回复：写操作，高风险，第三阶段再考虑

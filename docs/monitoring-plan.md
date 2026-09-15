@@ -168,7 +168,7 @@
 | 模块 | 脚本 | 状态 | 说明 |
 |------|------|------|------|
 | 通用监控/每日总结 | wx-monitor.py | ✅ 已实现 | 群聊监控+关键词+@我+recommend+daily（基于wx-cli） |
-| 实时监听 | realtime-monitor.py | ✅ 已实现 | new-messages 轮询、daemon 自愈、重要性判定（见 new-account-sop §A.12） |
+| 实时监听 | realtime-monitor.py | ✅ 已实现 | new-messages 轮询、daemon 自愈、重要性判定（见 references/realtime-and-daemon.md） |
 | 语音监控 | voice-monitor.py | ✅ 已实现 | 语音实时监控+转写+发送者识别 |
 | 消息采集 | message-collector.py | ✅ 已实现 | 直读库统一采集 33 种消息类型（wx-cli+SQLCipher） |
 | MCP 服务 | mcp-server/server.py | ✅ 已实现 | 以 MCP(STDIO/SSE) 暴露新消息，见 mcp-server/README |
@@ -218,9 +218,9 @@
 ### Phase 4：高级功能
 - ✅ 消息摘要/总结（AI 生成，wx-monitor daily）
 - 🔲 智能分类（工作/生活/广告/垃圾）
-- 🔄 自动回复（框架已实现，仅小号探索性开启，见 SKILL §10.7）
+- 🔄 自动回复（框架已实现，仅小号探索性开启，见 SKILL §6）
 - ✅ 历史消息搜索（wx search）
-- ✅ 多账号支持（wx-account.sh 单 App 切换，见 new-account-sop §A.4.2/A.6）
+- ✅ 多账号支持（wx-account.sh 单 App 切换，见 references/multi-account.md）
 
 ---
 

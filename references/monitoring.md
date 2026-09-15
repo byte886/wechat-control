@@ -1,7 +1,17 @@
 # 主动监控与每日总结 · 操作手册
 
-> 本文档下沉自 SKILL.md §9（运行面参考，按需读取）：详细命令、配置、重要消息判定、性能保护、推荐话术流程。
-> 监控/采集脚本分工总表见 SKILL.md §9.1（按场景选脚本，不要混用）。
+> 本文档聚焦 **wx-monitor.py 的每日总结 / recommend 选群 / 重要消息推送**（运行面参考，按需读取）。
+
+**监控/采集脚本分工（按场景选，不要混用）**：
+
+| 脚本 | 定位 | 何时用 / 详见 |
+|---|---|---|
+| `wx-monitor.py` | 群监控 ＋ **每日总结 / recommend 选群** / 飞书同步（⏳ 未接线） | 要 daily 总结、recommend 选群 → 本文 |
+| `realtime-monitor.py` | **实时监听**新消息、daemon 自检自愈、重要性判定、可选语音转写 | 要实时盯新消息 → [realtime-and-daemon.md](realtime-and-daemon.md) |
+| `voice-monitor.py` | 语音消息实时监控 ＋ 转写（直查 media_0.db） | 只盯语音、来一条转一条 → [voice-pipeline.md](voice-pipeline.md) |
+| `voice-transcribe.py` | 语音批量转文字（SILK 解码 ＋ FunASR） | 一次性转历史语音 → voice-pipeline.md |
+| `message-collector.py` | 直读 message/media 库，33 种消息类型采集/统计 | wx-cli 覆盖不到的类型（图片/视频/文件等） |
+| `mcp-server/server.py` | 以 MCP（STDIO/SSE）向豆包暴露新消息资源与工具 | 要在豆包内 MCP 常驻接入，见 mcp-server/README |
 
 ## 1. 概述
 
