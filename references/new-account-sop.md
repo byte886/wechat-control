@@ -6,7 +6,7 @@
 
 ### A.1 前置检查：版本对齐（必做）
 
-新号登记前，必须对齐以下三个版本维度，并记录到本地开发私档 `docs/database-schema.md`（不随公开仓分发，见 SKILL §0）。如版本不一致，需重新验证数据库定义。
+新号登记前，必须对齐以下三个版本维度，并记录到数据字典 `docs/database-schema.md`（只含表结构的脱敏明文、随仓；不得写入账号 wxid/昵称、具体 `Msg_<MD5>` 分表清单、记录条数、库大小，见 SKILL §0）。如版本不一致，需重新验证数据库定义。
 
 #### A.1.1 操作系统版本对齐
 
@@ -83,9 +83,9 @@ ls -la "$ACCOUNT_DIR/message/media_0.db"
 
 **版本不一致处理**：
 - 如微信版本变化 → 重新运行 `wx init --force` 提取密钥
-- 如表结构变化 → 重新生成本地私档 `docs/database-schema.md`
+- 如表结构变化 → 重新 dump 表结构，按脱敏口径（账号行占位、Msg 分表只留一个泛化样例、去掉记录条数与库大小）更新 `docs/database-schema.md`，明文随仓（见 SKILL §0）
 - 如SQLCipher版本变化 → 更新解密参数
-- 所有变化必须记录到本地私档 `docs/database-schema.md` 的环境与版本信息表（该文件不入库，见 SKILL §0）
+- 所有变化必须记录到数据字典 `docs/database-schema.md` 的环境与版本信息表（保持脱敏、不含账号与统计数据，见 SKILL §0）
 
 #### A.1.4 依赖工具检查
 
@@ -430,7 +430,7 @@ python3 ~/Doubao/skills/wechat-control/scripts/wx-send.py auto-reply run --inter
 - [ ] 微信版本对齐（版本号/构建号/客户端版本，确认~4.1.8）
 - [ ] 数据库定义对齐（SQLCipher版本/核心表结构验证）
 - [ ] 依赖工具检查（sqlcipher/wx/silk-decoder/FunASR）
-- [ ] 版本信息已记录到本地私档 `docs/database-schema.md` 环境与版本信息表（不入库）
+- [ ] 版本信息已记录到数据字典 `docs/database-schema.md`（脱敏明文、只含表结构，见 SKILL §0）
 
 **账号登记（A.2-A.6）**
 - [ ] 新微信号已登录并加载完成

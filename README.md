@@ -99,10 +99,13 @@ bash scripts/wechat-ui/send_message.sh "文件传输助手" "测试消息"
 wechat-control/
 ├── SKILL.md                    # AI Agent 技能文档（主文档）
 ├── README.md                   # 项目介绍（本文件）
-├── docs/                       # 设计/规划文档（给人看，AI 运行时不加载）
+├── docs/                       # 开发面（AI 运行时不加载）：脱敏设计文档随公开仓
 │   ├── PRD.md / FEATURES.md / ROADMAP.md
 │   ├── phase2-monitor-spec.md / phase3-write-spec.md / wechat-ai-agent-spec.md
-│   └── monitoring-plan.md      # test-cases.md / database-schema.md 仅本地保留、不入库
+│   ├── monitoring-plan.md      # 以上 7 篇为可公开的通用设计文档
+│   └── database-schema.md      # 微信库表结构字典（只留结构、已脱敏），明文随仓
+# 注：含个人数据的文件三种归宿——脱敏后明文随仓 / 无法脱敏则加密 .enc 随仓 / 无价值删除，
+#     不挪到仓库外；数据字典已剥离账号、会话分表清单、条数/大小；实测日志 test-cases.md 已删。
 ├── scripts/
 │   ├── wx-monitor.py           # 群监控 + 每日总结/推荐群/飞书同步
 │   ├── realtime-monitor.py     # 新消息实时监听（daemon 自愈、重要性判定）
@@ -119,7 +122,7 @@ wechat-control/
 └── third-party/                # 本人 fork 的多账号改造版 wx-cli（git 子模块；单账号只读可用 npm 官方版）
 ```
 
-> `docs/` 下的 PRD、路线图、阶段 spec、监控规划是设计/规划文档，随仓公开但 **AI 运行时不加载**；`test-cases.md`（本人实测日志）与 `database-schema.md`（本机库数据字典，含个人标识）仅维护者本地保留、已 `.gitignore`、不随仓分发。加载边界见 [SKILL.md](SKILL.md) §0。
+> 本仓为 **public 公开仓**，入仓内容（含全部历史）一旦 push 即对全世界可见，判据是"内容能否公开"，与它是 SKILL、脚本还是 `docs/` 无关。含个人数据的文件只有三种归宿：脱敏成通用内容后明文随仓 / 无法脱敏则加密为 `.enc` 随仓（无主口令解不开）/ 无价值删除，**不挪到仓库外**。`docs/` 下 7 篇 PRD/路线图/阶段 spec/监控规划是通用设计文档，随仓公开但 **AI 运行时不加载**；数据字典 `docs/database-schema.md` 只保留库/表/字段结构（已剥离账号、`Msg_<MD5>` 会话分表清单、记录条数、库大小），明文随仓；本人实测日志不保留。加载边界见 [SKILL.md](SKILL.md) §0。
 
 ## 📊 支持的消息类型
 
@@ -163,10 +166,10 @@ wechat-control/
 - [references/new-account-sop.md](references/new-account-sop.md) — 新微信号登录/多账号/daemon SOP
 - [mcp-server/README.md](mcp-server/README.md) — 可选 MCP 监控服务
 
-**设计/规划文档（给人看，公开，AI 运行时不加载，位于 `docs/`）**
+**设计/规划文档（已脱敏、随公开仓；AI 运行时不加载，位于 `docs/`，共 7 篇）**
 - [PRD.md](docs/PRD.md) · [FEATURES.md](docs/FEATURES.md) · [ROADMAP.md](docs/ROADMAP.md)
 - [phase2-monitor-spec.md](docs/phase2-monitor-spec.md) · [phase3-write-spec.md](docs/phase3-write-spec.md) · [wechat-ai-agent-spec.md](docs/wechat-ai-agent-spec.md) · [monitoring-plan.md](docs/monitoring-plan.md)
-- `test-cases.md`（本人实测日志）、`database-schema.md`（本机库数据字典）仅维护者本地保留，不随公开仓分发
+- `database-schema.md`：微信本地数据库的**表结构字典**（明文随仓，只含库/表/字段，已剔除账号 wxid/昵称、具体会话分表清单、记录条数、库大小等个人/统计数据，不含消息正文）；本人实测日志 `test-cases.md` 无长期价值，已删除、不保留
 
 ## 🛠️ 技术栈
 

@@ -273,7 +273,7 @@
 
 ## 八、参考文档
 
-- [数据库 Schema](database-schema.md)
+- 数据库 Schema：随仓脱敏明文 `docs/database-schema.md`（只含库/表/字段结构，不含账号、会话清单、条数、消息正文）
 - [语音监控脚本](../scripts/voice-monitor.py)
 - [通用监控脚本](../scripts/wx-monitor.py)
 - [语音转写脚本](../scripts/voice-transcribe.py)
