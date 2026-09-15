@@ -18,6 +18,7 @@
 import asyncio
 import json
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -30,7 +31,7 @@ from fastmcp.server.lifespan import lifespan
 from fastmcp.server.dependencies import get_context
 
 # ============ 配置 ============
-WX_CLI_BIN = "/usr/local/bin/wx"
+WX_CLI_BIN = shutil.which("wx") or "wx"
 POLL_INTERVAL = 5  # 轮询间隔（秒）
 STATE_FILE = Path.home() / ".wx-cli/mcp_server_state.json"
 CONFIG_FILE = Path.home() / ".wx-cli/mcp_server_config.json"

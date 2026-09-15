@@ -92,7 +92,7 @@ ls -la "$ACCOUNT_DIR/message/media_0.db"
 ```bash
 which sqlcipher && sqlcipher --version
 which wx && wx --version
-ls ~/Doubao/skills/wechat-control/tools/silk-v3-decoder/converter.sh
+ls tools/silk-v3-decoder/converter.sh
 python3 -c "import funasr; print('FunASR OK')" 2>/dev/null || echo "FunASR 未安装（语音转写需要）"
 ```
 
@@ -114,10 +114,7 @@ ls -lt ~/Library/Containers/com.tencent.xinWeChat/Data/Documents/xwechat_files/ 
 
 **账号对应关系**（角色固定；真实昵称/wxid 属个人标识，不写入公开仓）：
 
-| 角色 | 配置名 | 微信名称 | wxid（数据目录名） |
-|------|--------|----------|---------------------|
-| 大号（主号） | `main` | 〈主号昵称〉 | `〈主号wxid，形如 wxid_xxxxxxxx_yyyy〉` |
-| 小号（自动化专用） | `alt` | 〈小号昵称〉 | `〈小号wxid〉` |
+> 大小号角色定义与用途表见 SKILL.md §2.5（运行面入口保留该表，本文不重复）。
 
 > 真实值用 `bash scripts/wx-account.sh list` 现查，或看本机不入库的 `~/.wx-cli/accounts/main|alt/` 目录；不要把真实昵称/wxid 填回本文件。
 
@@ -330,10 +327,10 @@ cp ~/.wx-cli/accounts/main/all_keys.json ~/.wx-cli/all_keys.json
 
 ```bash
 # 1. 列出最近语音
-python3 ~/Doubao/skills/wechat-control/scripts/voice-transcribe.py list --limit 5
+python3 scripts/voice-transcribe.py list --limit 5
 
 # 2. 转写最近语音（验证完整链路）
-python3 ~/Doubao/skills/wechat-control/scripts/voice-transcribe.py transcribe --limit 2
+python3 scripts/voice-transcribe.py transcribe --limit 2
 
 # 3. 直查 VoiceInfo 表验证数据存在
 sqlcipher ~/Library/Containers/com.tencent.xinWeChat/Data/Documents/xwechat_files/<wxid>/db_storage/message/media_0.db << EOF
@@ -352,7 +349,7 @@ EOF
 
 ```bash
 # 1. 列出有语音的会话，验证联系人识别
-python3 ~/Doubao/skills/wechat-control/scripts/voice-monitor.py list-sessions
+python3 scripts/voice-monitor.py list-sessions
 
 # 2. 验证输出应包含：显示名称、备注名、微信昵称、微信号
 # 例如（均为占位，实际以本机查询为准）：
@@ -380,16 +377,16 @@ rm -f ~/.wx-cli/voice_monitor_state.json
 rm -f ~/.wx-cli/monitor_state.json
 
 # 2. 验证语音监控能正常启动（单次检查，不循环）
-python3 ~/Doubao/skills/wechat-control/scripts/voice-monitor.py once
+python3 scripts/voice-monitor.py once
 # 应输出：首次启动，从30秒前开始监控（缓冲时间）
 
 # 3. 查看监控状态
-python3 ~/Doubao/skills/wechat-control/scripts/voice-monitor.py status
+python3 scripts/voice-monitor.py status
 
 # 4. 配置通用监控（如需）
-python3 ~/Doubao/skills/wechat-control/scripts/wx-monitor.py config list
+python3 scripts/wx-monitor.py config list
 # 添加监控群（按需）
-# python3 ~/Doubao/skills/wechat-control/scripts/wx-monitor.py config add-group "群名称"
+# python3 scripts/wx-monitor.py config add-group "群名称"
 ```
 
 **监控配置文件位置**：
@@ -408,19 +405,19 @@ python3 ~/Doubao/skills/wechat-control/scripts/wx-monitor.py config list
 
 ```bash
 # 发送测试消息到文件传输助手
-bash ~/Doubao/skills/wechat-control/scripts/wechat-ui/send_message.sh "文件传输助手" "测试消息"
+bash scripts/wechat-ui/send_message.sh "文件传输助手" "测试消息"
 
 # 快速模式（跳过发送后验证）
-bash ~/Doubao/skills/wechat-control/scripts/wechat-ui/send_message.sh "文件传输助手" "测试消息" --no-verify
+bash scripts/wechat-ui/send_message.sh "文件传输助手" "测试消息" --no-verify
 ```
 
 **自动回复配置**（仅小号）：
 ```bash
 # 添加触发关键词
-python3 ~/Doubao/skills/wechat-control/scripts/wx-send.py auto-reply config add-keyword "在吗"
+python3 scripts/wx-send.py auto-reply config add-keyword "在吗"
 
 # 启动自动回复
-python3 ~/Doubao/skills/wechat-control/scripts/wx-send.py auto-reply run --interval 60
+python3 scripts/wx-send.py auto-reply run --interval 60
 ```
 
 ### A.11 完成检查清单

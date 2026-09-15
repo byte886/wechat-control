@@ -67,7 +67,7 @@ def load_monitor_config():
     if MONITOR_CONFIG_FILE.exists():
         try:
             return {**DEFAULT_CONFIG, **json.loads(MONITOR_CONFIG_FILE.read_text())}
-        except:
+        except (json.JSONDecodeError, OSError):
             pass
     return DEFAULT_CONFIG.copy()
 
@@ -102,7 +102,7 @@ def get_daemon_pid():
         try:
             data = json.loads(DAEMON_PID_FILE.read_text())
             return data.get("pid")
-        except:
+        except (json.JSONDecodeError, OSError):
             pass
     return None
 
@@ -114,7 +114,7 @@ def is_daemon_running(pid):
     try:
         os.kill(pid, 0)
         return True
-    except:
+    except OSError:
         return False
 
 
@@ -145,7 +145,7 @@ def restart_daemon():
         try:
             os.kill(pid, 9)
             time.sleep(1)
-        except:
+        except OSError:
             pass
 
     # 清除残留文件
@@ -209,7 +209,7 @@ def load_state():
     if STATE_FILE.exists():
         try:
             return json.loads(STATE_FILE.read_text())
-        except:
+        except (json.JSONDecodeError, OSError):
             pass
     return {
         "initialized": False,

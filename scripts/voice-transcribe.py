@@ -25,6 +25,7 @@
 import argparse
 import json
 import os
+import select
 import subprocess
 import sys
 import tempfile
@@ -37,8 +38,26 @@ WECHAT_FILES = Path.home() / "Library/Containers/com.tencent.xinWeChat/Data/Docu
 WX_CLI_CONFIG = Path.home() / ".wx-cli/config.json"
 ALL_KEYS_PATH = Path.home() / ".wx-cli/all_keys.json"
 SILK_DECODER = SKILL_DIR / "tools/silk-v3-decoder/converter.sh"
-FUNASR_VENV = Path.home() / "Doubao/chats/2026-08-26/new-chat/gaodun-course-knowledge-base/transcription/venv"
-FUNASR_PYTHON = FUNASR_VENV / "bin/python"
+
+# FunASR (SenseVoiceSmall) 解释器解析顺序（不硬编码其他会话的 venv 路径）：
+#   1. 环境变量 FUNASR_PYTHON
+#   2. ~/.wx-cli/config.json 的 "funasr_python" 字段
+#   3. 默认 ~/.wx-cli/funasr-venv/bin/python
+def _resolve_funasr_python():
+    env_py = os.environ.get("FUNASR_PYTHON")
+    if env_py and Path(env_py).exists():
+        return Path(env_py)
+    if WX_CLI_CONFIG.exists():
+        try:
+            cfg = json.loads(WX_CLI_CONFIG.read_text())
+            cfg_py = cfg.get("funasr_python", "")
+            if cfg_py and Path(cfg_py).exists():
+                return Path(cfg_py)
+        except (json.JSONDecodeError, OSError):
+            pass
+    return Path.home() / ".wx-cli/funasr-venv/bin/python"
+
+FUNASR_PYTHON = _resolve_funasr_python()
 
 # media_0.db 密钥（从 all_keys.json 读取）
 MEDIA_DB_KEY = None
@@ -115,7 +134,7 @@ def list_voices(limit=20):
     """列出语音消息"""
     db_path = get_media_db_path()
     print(f"📁 数据库: {db_path}")
-    print(f"🔑 密钥: {MEDIA_DB_KEY[:16]}...")
+    print("🔑 密钥: 已加载（不回显）")
     print()
 
     query = f"SELECT chat_name_id || '|' || create_time || '|' || local_id || '|' || svr_id || '|' || length(voice_data) || '|' || data_index FROM VoiceInfo ORDER BY create_time DESC LIMIT {limit};"
@@ -130,7 +149,7 @@ def list_voices(limit=20):
             try:
                 ts = int(parts[1])
                 time_str = datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S")
-            except:
+            except (ValueError, IndexError):
                 time_str = parts[1]
             local_id = parts[2]
             size = parts[4]
@@ -188,36 +207,103 @@ def silk_to_wav(silk_path, wav_path):
     return False
 
 
-def transcribe_wav(wav_path):
-    """用 FunASR 转文字（SenseVoiceSmall）"""
-    script = f'''
-import warnings
+# ============ FunASR 常驻 worker（模型进程内只加载一次）============
+# worker 在 FunASR venv 解释器中常驻：首次请求时懒加载 SenseVoiceSmall，
+# 之后从 stdin 逐行读 wav 路径、向 stdout 逐行写转写结果。
+# 主进程用 get_funasr_proc() 拿到同一个常驻进程，避免每条语音都重载模型。
+_FUNASR_WORKER = '''
+import sys, warnings
 warnings.filterwarnings("ignore")
-from funasr import AutoModel
 
-model = AutoModel(model="iic/SenseVoiceSmall", device="cpu", disable_update=True)
-res = model.generate(input="{wav_path}", cache={{}}, language="auto", use_itn=True)
-text = res[0].get("text", "")
-# 清理 SenseVoice 标记和噪声
-tags_to_remove = [
+_model = None
+
+def get_model():
+    """懒加载单例：SenseVoiceSmall 模型在 worker 进程内只加载一次"""
+    global _model
+    if _model is None:
+        from funasr import AutoModel
+        _model = AutoModel(model="iic/SenseVoiceSmall", device="cpu", disable_update=True)
+    return _model
+
+_TAGS = [
     "<|zh|>", "<|en|>", "<|yue|>", "<|ja|>", "<|ko|>",
     "<|nospeech|>", "<|Speech|>", "<|withitn|>", "<|woitn|>",
     "<|HAPPY|>", "<|SAD|>", "<|ANGRY|>", "<|NEUTRAL|>",
     "<|FEARFUL|>", "<|DISGUSTED|>", "<|SURPRISED|>",
 ]
-for tag in tags_to_remove:
-    text = text.replace(tag, "")
-print(text.strip())
+
+for _line in sys.stdin:
+    _wav = _line.strip()
+    if not _wav:
+        continue
+    try:
+        _res = get_model().generate(input=_wav, cache={}, language="auto", use_itn=True)
+        _text = _res[0].get("text", "")
+        for _t in _TAGS:
+            _text = _text.replace(_t, "")
+        print(_text.strip(), flush=True)
+    except Exception as _e:
+        print(f"[识别失败: {_e}]", flush=True)
 '''
-    result = subprocess.run(
-        [str(FUNASR_PYTHON), "-c", script],
-        capture_output=True, text=True, timeout=120
+
+_funasr_proc = None
+
+
+def get_funasr_proc():
+    """获取（必要时启动/重启）常驻 FunASR worker 进程"""
+    global _funasr_proc
+    if _funasr_proc is not None and _funasr_proc.poll() is None:
+        return _funasr_proc
+    if not FUNASR_PYTHON.exists():
+        return None
+    _funasr_proc = subprocess.Popen(
+        [str(FUNASR_PYTHON), "-u", "-c", _FUNASR_WORKER],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL, text=True, bufsize=1,
     )
-    if result.returncode != 0:
-        return f"[识别失败: {result.stderr[:100]}]"
-    # 只取最后一行（过滤掉版本检查等输出）
-    lines = result.stdout.strip().split("\n")
-    return lines[-1].strip() if lines else ""
+    return _funasr_proc
+
+
+def _readline_with_timeout(f, timeout):
+    """带超时读一行（select 仅作就绪提示；worker 每次结果都带换行 flush）"""
+    r, _, _ = select.select([f], [], [], timeout)
+    if not r:
+        return None
+    return f.readline()
+
+
+def transcribe_wav(wav_path):
+    """用常驻 FunASR worker 转文字（模型懒加载一次后复用，不再每条重载）"""
+    proc = get_funasr_proc()
+    if proc is None:
+        return "[识别失败: FunASR 解释器未配置]"
+
+    def _ask(p):
+        p.stdin.write(f"{wav_path}\n")
+        p.stdin.flush()
+
+    try:
+        _ask(proc)
+    except (BrokenPipeError, OSError):
+        # worker 已退出，重启一次再试
+        global _funasr_proc
+        _funasr_proc = None
+        proc = get_funasr_proc()
+        if proc is None:
+            return "[识别失败: FunASR worker 启动失败]"
+        try:
+            _ask(proc)
+        except (BrokenPipeError, OSError):
+            return "[识别失败: FunASR worker 写入失败]"
+
+    # 首次调用含模型加载（CPU 较慢），给足超时；后续调用只做推理
+    try:
+        line = _readline_with_timeout(proc.stdout, 180)
+    except OSError:
+        return "[识别失败: FunASR worker 读取失败]"
+    if line is None:
+        return "[识别失败: FunASR worker 超时]"
+    return line.strip() or "[识别失败]"
 
 
 def transcribe_voices(limit=10, chat_name=None, since=None, output_format="text"):
@@ -234,7 +320,7 @@ def transcribe_voices(limit=10, chat_name=None, since=None, output_format="text"
         try:
             since_ts = int(datetime.strptime(since, "%Y-%m-%d").timestamp())
             where.append(f"create_time >= {since_ts}")
-        except:
+        except ValueError:
             pass
 
     where_clause = " AND ".join(where) if where else "1=1"
@@ -259,7 +345,7 @@ def transcribe_voices(limit=10, chat_name=None, since=None, output_format="text"
             try:
                 ts = int(parts[1])
                 time_str = datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S")
-            except:
+            except (ValueError, IndexError):
                 time_str = parts[1]
             local_id = parts[2]
             size = parts[4]

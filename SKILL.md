@@ -179,15 +179,7 @@ wx init --force
 > Windows 上 `wx init` 会自动检测 `Weixin.exe` 进程和数据目录（通常在"文档\WeChat Files\<wxid>\"下，具体路径可在微信设置→文件管理中查看）。
 
 ### 4.3 成功标志
-```
-找到 19 个加密数据库
-扫描进程内存寻找密钥...
-找到 18 个候选密钥
-匹配到 16/18 个密钥
-成功提取 16 个数据库密钥
-密钥已保存: ~/.wx-cli/all_keys.json
-配置已保存: ~/.wx-cli/config.json
-```
+密钥提取成功的标准输出（"找到 19 个加密数据库…成功提取 16 个数据库密钥…配置已保存"）见 [references/new-account-sop.md](references/new-account-sop.md) §A.4.1。
 
 ### 4.4 常见失败原因
 
@@ -207,28 +199,9 @@ wx sessions
 
 ### 4.6 数据库完整性说明（为什么不是所有库都有密钥）
 
-微信 4.x 的 `db_storage/` 目录下可能有 **20 个甚至更多** `.db` 文件（数据量大时 message/biz_message 会分片，完整可达 32 个），但 `wx init` 通常只能提取到 **17 个左右**的密钥。这是**正常现象**，不是 bug。
+微信 4.x 部分数据库可能没有密钥，这是**懒加载机制**导致的正常现象，不是 bug：`wx init` 从进程内存扫描密钥，从未被使用过的库其密钥从未进入内存。实测常见缺失 3 个库（`chatbot_message.db` / `third_app_icon.db` / `weclaw.db`）均为边缘功能，聊天内容在 `message_0.db`、媒体在 `media_0.db`、联系人在 `contact.db`，17 个密钥已全覆盖核心需求，可直接忽略。
 
-**根本原因：微信 4.x 每个数据库使用独立密钥 + 懒加载机制。** 数据库只有在对应功能被实际使用时，微信才会打开它并把密钥加载进内存；`wx init` 是从微信进程内存扫描密钥，从未被使用过的库，其密钥从未进入内存，自然扫不到。
-
-**实测缺失的 3 个库（均为边缘功能，对核心需求无影响）：**
-
-| 数据库 | 位置 | 大小 | 用途 | 为什么没密钥 |
-|--------|------|------|------|-------------|
-| `chatbot_message.db` | `chatbot/` | ~48KB | 微信内置 AI 助手对话消息（元宝入口、AI 搜索、AI 总结等） | 从未使用过微信 AI 对话功能 |
-| `third_app_icon.db` | `third_app_icon/` | ~12KB | 第三方应用图标缓存（小程序、外部 App、应用号图标） | 纯缓存，价值极低 |
-| `weclaw.db` | `message/` | ~4KB（空库） | 微信官方客户端辅助/AI Agent 组件库（对应生态内 OpenClaw/ClawBot 能力） | 自建库以来从未被打开，连 `-wal/-shm` 边车文件都没有 |
-
-> ⚠️ 注意：`weclaw.db` 是**微信官方自带**的库，与网上第三方开源项目 WeClaw（WeChat AI Bridge）只是恰好同名，没有任何关系。
-
-**如何验证（三重证据）：**
-1. 时间戳：这 3 个库停留在微信安装初始化日期（如 Aug 23），之后从未被写过；而在用的 `message_0.db` 等持续更新
-2. `weclaw.db` 只有 4KB（一个空 SQLite 页），无 `-wal/-shm` 文件 → 从未被打开
-3. `lsof -p <微信PID>` 确认这 3 个库当前未被微信进程加载
-
-**如果将来真要解密（目前没必要）：** 在微信里触发一次对应功能（如用一次 AI 对话、打开一个小程序），让库加载进内存，再重跑 `sudo wx init --force` 扫描。
-
-**结论：这 3 个库对核心需求（读聊天记录、监控群消息、语音转文字、联系人查询）没有任何价值——聊天内容在 `message_0.db`、媒体在 `media_0.db`、联系人在 `contact.db`，17 个密钥已全覆盖。可以直接忽略。**
+原因分析、三重验证证据与"将来如何补提"详见 [docs/troubleshooting-missing-db-keys.md](docs/troubleshooting-missing-db-keys.md)。
 
 ## 5. 常用命令详解
 
@@ -356,63 +329,7 @@ wx daemon stop                        # 停止 daemon
 
 ## 7. AI 总结模板
 
-### 7.1 默认格式（简短要点）
-查询结果返回后，按以下格式总结：
-
-```
-【<会话名> · <时间范围>】共 N 条消息，M 人参与
-
-核心话题：
-1. <话题1简要>
-2. <话题2简要>
-3. <话题3简要>
-
-重要提醒：
-- ⚠️ @我的消息：<内容>
-- 📌 关键决策：<内容>
-- 🔥 紧急事项：<内容>
-
-（需要详细展开某个话题，或看原始消息，告诉我）
-```
-
-### 7.2 详细格式（用户说"详细点"时）
-按话题分类，带原始消息引用：
-```
-【<会话名> · <时间范围>】
-
-【话题1：<话题名>】
-- <发送人>: <消息内容>
-- <发送人>: <消息内容>
-小结：<该话题的结论或进展>
-
-【话题2：<话题名>】
-...
-
-【重要消息标注】
-- @我：...
-- 决策：...
-- 紧急：...
-```
-
-### 7.3 未读消息格式
-```
-【未读消息】共 N 条（M 个独立来源）
-
-📢 公众号推送：
-1. <公众号名>（<时间>）：<摘要>
-
-💬 私聊/群聊：
-1. <名称>（<时间>）：<摘要>
-
-⚠️ 重要提醒：
-- 无 @我的消息 / 有 @我：<内容>
-- 无紧急事项 / 紧急：<内容>
-```
-
-### 7.4 重要消息识别规则
-- **@我**：消息内容包含 @当前用户昵称或 @all
-- **关键决策**：包含"决定/通过/同意/否决/截止/ deadline / 安排"等关键词
-- **紧急事项**：包含"紧急/马上/立刻/今天必须/ ASAP"等关键词，或时间敏感内容
+查询结果按三种格式总结：默认简短要点、"详细点"时按话题分类带原始引用、未读消息按来源分组；重要消息按 @我 / 关键决策 / 紧急事项三类标注。完整模板与识别规则见 [references/summary-templates.md](references/summary-templates.md)。
 
 ## 8. 高级用法与体验优化
 
@@ -491,106 +408,20 @@ wx export "联系人名" --output ~/Downloads/private_chat.md
 
 ## 9. 主动监控与每日总结（第二阶段）
 
-### 9.1 概述
-基于第一阶段的只读查询能力，扩展主动监控、实时推送、每日总结、飞书同步。
-- **监控脚本**：`scripts/wx-monitor.py`
-- **配置文件**：`~/.wx-cli/monitor_config.json`
-- **状态文件**：`~/.wx-cli/monitor_state.json`
-- **每日总结存档**：`~/.wx-cli/daily_summary_YYYY-MM-DD.md`
-
-**监控/采集脚本分工（按场景选，不要混用）**：
+基于只读查询能力扩展主动监控、实时推送与每日总结。监控/采集脚本分工（按场景选，不要混用）：
 
 | 脚本 | 定位 | 何时用 |
 |---|---|---|
-| `wx-monitor.py` | 群监控 + **每日总结 / 推荐监控群** / 飞书同步 | 要 daily 总结、recommend 选群（即本章命令） |
+| `wx-monitor.py` | 群监控 + **每日总结 / 推荐监控群** / 飞书同步（⏳ 未接线） | 要 daily 总结、recommend 选群 |
 | `realtime-monitor.py` | **实时监听**新消息，daemon 自检自愈、重要性判定，可选 `--transcribe-voice` | 要实时盯新消息；详见 new-account-sop §A.12 |
 | `voice-monitor.py` | 语音消息实时监控 + 转写（直查 media_0.db） | 只盯语音、来一条转一条 |
 | `voice-transcribe.py` | 语音批量转文字（SILK 解码 + FunASR） | 一次性转写历史语音 |
 | `message-collector.py` | 直读 message/media 库，33 种消息类型采集/统计 | wx-cli 覆盖不到的类型（图片/视频/文件等） |
 | `mcp-server/server.py` | 以 MCP（STDIO/SSE）向豆包暴露新消息资源与工具 | 要在豆包内以 MCP 常驻接入，见 mcp-server/README |
 
-### 9.2 快速开始
-```bash
-# 1. 推荐监控群（AI 分析活跃度，给出推荐列表，用户选择）
-python3 scripts/wx-monitor.py recommend
-
-# 2. 查看当前配置
-python3 scripts/wx-monitor.py config list
-
-# 3. 启动监控（前台运行，Ctrl+C 停止）
-python3 scripts/wx-monitor.py monitor
-
-# 4. 单次轮询（测试用，不进入循环）
-python3 scripts/wx-monitor.py monitor --once
-
-# 5. 生成当日总结
-python3 scripts/wx-monitor.py daily
-
-# 6. 生成当日总结并同步到飞书
-python3 scripts/wx-monitor.py daily --sync
-
-# 7. 查看监控状态
-python3 scripts/wx-monitor.py status
-```
-
-### 9.3 命令详解
-
-| 命令 | 说明 |
-|------|------|
-| `recommend` | 分析所有群的活跃度和人数，按消息量排序给出推荐列表，用户输入序号选择 |
-| `monitor` | 启动监控（前台运行），每 N 分钟轮询 `wx new-messages`，重要消息实时推送 |
-| `monitor --once` | 单次轮询，测试用 |
-| `daily` | 生成当日所有监控群的总结（消息统计、重要消息、消息类型、最近文本） |
-| `daily --sync` | 生成总结并同步到飞书知识库 |
-| `config list` | 查看当前配置 |
-| `config add-group <群名/ID>` | 添加监控群 |
-| `config remove-group <群名/ID>` | 移除监控群 |
-| `config add-keyword <关键词>` | 添加自定义关键词 |
-| `config remove-keyword <关键词>` | 移除关键词 |
-| `config add-person <人名>` | 添加特定人（发任何消息都推送） |
-| `config remove-person <人名>` | 移除特定人 |
-| `status` | 查看监控状态（启动时间、上次轮询、累计推送） |
-
-### 9.4 重要消息判定规则（优先级从高到低）
-1. **@我 或 @all**（必须推送，默认开启）
-2. **自定义关键词匹配**（用户配置，如"紧急"、"重要"、"截止"、"开会"）
-3. **特定人发送的消息**（用户配置，如老板、家人、重要客户）
-4. **系统消息**（入群/退群/撤回，默认不推送）
-5. **其他** → 不实时推送，只进每日总结
-
-不重要的消息（普通聊天、图片、视频、语音等）不会实时推送，只在每日总结里出现，避免信息过载。
-
-### 9.5 推送通道
-- **重要消息**：豆包内实时通知（包含群名、发送人、时间、触发原因、消息内容）
-- **每日总结**：豆包推送 + 飞书文档存档（AI 知识库 → 豆包 → 微信自动化 → 监控总结）
-- **后续需求（已记录，暂不实现）**：微信推送到指定人/群、公众号通知
-
-### 9.6 配置说明
-| 配置项 | 说明 | 默认值 |
-|--------|------|--------|
-| `monitor_groups` | 监控的群列表 `[{"name": "...", "id": "..."}]` | `[]` |
-| `keywords` | 自定义关键词列表 | `[]` |
-| `important_persons` | 特定人列表 | `[]` |
-| `push_at_mention` | @我 时推送 | `true` |
-| `push_at_all` | @all 时推送 | `true` |
-| `poll_interval_minutes` | 轮询间隔（分钟） | `5` |
-| `daily_summary_time` | 每日总结时间 | `21:00` |
-| `feishu_sync` | 是否同步到飞书 | `false` |
-| `current_user_nickname` | 当前用户昵称（用于 @我 判断） | `""` |
-
-### 9.7 性能保护
-- 单次轮询新消息超过 **500 条**时，输出性能提醒，建议减少监控群或增加轮询间隔
-- 建议监控群不超过 **20 个**，超过时提醒
-- 已推送消息 ID 最多保留 **1000 条**，自动清理旧记录（防止状态文件过大）
-- 轮询间隔可配置（1-30 分钟），默认 5 分钟，对性能影响极小
-
-### 9.8 推荐话术流程（AI 推荐监控群）
-1. AI 运行 `wx sessions` 获取所有会话
-2. 对每个群运行 `wx stats` 获取消息量和活跃度
-3. 按活跃度（近7天消息量）排序，取 Top 10
-4. 输出推荐列表（群名、消息量、人数、推荐理由）
-5. 用户输入序号选择，写入配置
-6. 用户也可以手动添加不在推荐列表的群
+> 详细命令（recommend / monitor / daily / config / status）、配置项、重要消息判定规则、推送通道、性能保护与推荐话术流程，见 [references/monitoring.md](references/monitoring.md)。
+>
+> ⚠️ **飞书同步尚未接线**：`daily --sync` 目前只是占位（脚本 TODO，仅打印"开发中"标记）；每日总结当前只推送豆包。
 
 ## 10. 写操作：发送消息与UI自动化（第三阶段）
 
@@ -608,67 +439,23 @@ python3 scripts/wx-monitor.py status
 
 ```bash
 # 发送消息到指定聊天（带完整验证，约9.3秒）
-bash ~/Doubao/skills/wechat-control/scripts/wechat-ui/send_message.sh "文件传输助手" "消息内容"
+bash scripts/wechat-ui/send_message.sh "文件传输助手" "消息内容"
 
 # 快速模式（跳过发送后OCR验证，约8秒）
-bash ~/Doubao/skills/wechat-control/scripts/wechat-ui/send_message.sh "文件传输助手" "消息内容" --no-verify
+bash scripts/wechat-ui/send_message.sh "文件传输助手" "消息内容" --no-verify
 ```
 
 ### 10.3 实现原理：为什么选 Cmd+F 方案
 
-对比了三种UI控制方案，最终选择 **Cmd+F搜索+回车选中** 作为核心方案：
+对比了三种 UI 控制方案，最终选择 **Cmd+F 搜索+回车选中** 作为核心方案（纯键盘操作、不依赖坐标、微信原生支持）：
 
 | 方案 | 可靠性 | 原因 |
 |------|--------|------|
 | OCR识别+坐标点击 | 不稳定 | 坐标转换易出错，窗口大小变化影响大，多次误点"搜索聊天记录"或误发群 |
-| Computer Use / axcli | 不可靠 | 微信聊天区不暴露给AX（axcli仅9元素），搜索框/输入框不是可操作元素 |
+| Computer Use / axcli | 不可靠 | 微信聊天区不暴露给 AX（axcli仅9元素），搜索框/输入框不是可操作元素 |
 | **Cmd+F搜索+回车选中** | **可靠** | 纯键盘操作，不依赖坐标，微信原生支持，已验证多次成功 |
 
-**完整7步流程**：
-1. reopen恢复窗口 + 调整大小 + 切回聊天页
-2. Cmd+F搜索 → 清空 → 粘贴 → 回车选中
-3. OCR验证当前聊天标题（安全检查）
-4. 点击输入框（跳过导航栏+会话列表共232px）
-5. 粘贴消息内容
-6. 回车发送
-7. OCR验证发送结果（--no-verify模式跳过）
-
-### 10.4 健壮性处理
-
-脚本已验证能处理以下极端场景：
-
-| 场景 | 处理方式 |
-|------|----------|
-| 窗口最小化 | `reopen` 命令恢复窗口（比 `activate` 更可靠） |
-| 窗口过小（看不到搜索框） | 检测尺寸 < 700x500 则自动调整到 700x500 |
-| 当前在通讯录/收藏等非聊天页 | 点击左侧导航栏"微信"图标切回聊天页 |
-| 搜索框有残留/重复输入 | Cmd+A全选 + Delete清空后再粘贴 |
-| 有弹窗遮挡 | ESC关闭弹窗后再操作 |
-
-### 10.5 性能与速度
-
-| 模式 | 正常状态耗时 | 说明 |
-|------|-------------|------|
-| 默认模式（带双重OCR验证） | 9.3秒 | 发送前验证标题 + 发送后验证消息 |
-| `--no-verify` 模式 | 8.0秒 | 只做发送前标题验证，跳过发送后验证 |
-
-**各阶段耗时**（正常状态）：
-- 步骤1 激活+恢复窗口+切回聊天页：~2秒
-- 步骤2 Cmd+F搜索+选中：~1.5秒
-- 步骤3 OCR验证标题：~2秒
-- 步骤4-6 点击输入框+粘贴+发送：~1.5秒
-- 步骤7 OCR验证发送结果：~2秒
-
-### 10.6 文件结构
-
-```
-scripts/wechat-ui/
-├── send_message.sh              # 主发送脚本（7步完整流程）
-├── lib_wechat_ui.sh             # 坐标转换库（窗口rect获取、归一化坐标点击）
-├── ocr_wechat_screenshot.sh     # macOS Vision OCR调用（中文+英文识别）
-├── prepare_wechat_viewport.sh   # 激活微信到前台（不改变窗口大小）
-└── search_chat_and_click_local_result.sh  # OCR搜索+点击备选方案（不稳定，仅参考）
-```
+完整 7 步流程、健壮性处理（窗口最小化/过小/非聊天页/搜索残留/弹窗遮挡）、各阶段耗时与文件结构，见 [docs/phase3-write-spec.md](docs/phase3-write-spec.md) 与 `scripts/wechat-ui/` 目录。
 
 ### 10.7 自动回复（已实现框架，探索性质）
 
@@ -677,20 +464,20 @@ scripts/wechat-ui/
 **快速开始**：
 ```bash
 # 配置触发关键词
-python3 ~/Doubao/skills/wechat-control/scripts/wx-send.py auto-reply config add-keyword "在吗"
-python3 ~/Doubao/skills/wechat-control/scripts/wx-send.py auto-reply config add-keyword "谢谢"
+python3 scripts/wx-send.py auto-reply config add-keyword "在吗"
+python3 scripts/wx-send.py auto-reply config add-keyword "谢谢"
 
 # 配置指定联系人/群（可选，不配置则只按关键词触发）
-python3 ~/Doubao/skills/wechat-control/scripts/wx-send.py auto-reply config add-contact "文件传输助手"
+python3 scripts/wx-send.py auto-reply config add-contact "文件传输助手"
 
 # 启动自动回复（前台运行，Ctrl+C停止）
-python3 ~/Doubao/skills/wechat-control/scripts/wx-send.py auto-reply run --interval 60
+python3 scripts/wx-send.py auto-reply run --interval 60
 
 # 查看状态
-python3 ~/Doubao/skills/wechat-control/scripts/wx-send.py auto-reply status
+python3 scripts/wx-send.py auto-reply status
 
 # 查看日志
-python3 ~/Doubao/skills/wechat-control/scripts/wx-send.py auto-reply log --limit 20
+python3 scripts/wx-send.py auto-reply log --limit 20
 ```
 
 **主循环流程**：
@@ -710,46 +497,9 @@ python3 ~/Doubao/skills/wechat-control/scripts/wx-send.py auto-reply log --limit
 - 需前台运行，未做daemon化
 - 定位为探索性质，不建议用于重要场景
 
-## 11. 常见问题
+## 11. 常见问题与错误处理
 
-### Q1: wx init 提示需要重签微信，要重签吗？
-**不要重签。** 那是 wx-cli 的默认文案，假设用户用重签方式。关 SIP + sudo 即可不重签提取密钥。重签会改变微信 code identity，可能触发风控。
-
-### Q2: 密钥提取成功，但 wx sessions 报错"无法解密 session.db"？
-可能是密钥与当前数据目录不匹配。确认：
-1. 微信当前登录的是目标账号
-2. `~/.wx-cli/config.json` 里的 db_dir 指向正确的账号数据目录
-3. 用 `sudo wx init --force` 重新提取
-
-### Q3: 搜索返回 0 条结果？
-可能原因：
-- 关键词只出现在合并聊天记录或公众号标题中，不被全文索引
-- 时间窗口限制，加 `--since 2026-01-01` 扩大范围
-- 消息类型不匹配，加 `--type text` 或去掉类型过滤
-- 换个更短/更常见的关键词试试
-
-### Q4: 群名显示为一串 ID（如 xxxxxxxxxx@chatroom）？
-这是正常的，群名称尚未同步到本地数据库。用该 ID 同样可以查询历史、成员、统计。在微信里打开该群聊一次，群名称可能会同步。
-
-### Q5: 可以用大号吗？
-可以，但建议先用小号跑通所有功能。大号读取同样安全（纯本地文件操作），但大号更重要，建议等功能稳定、错误处理完善后再用。切换大号后需重新 `sudo wx init` 提取大号密钥。
-
-### Q6: 微信自动升级了怎么办？
-如果升级到 4.1.10+，wx-cli 可能无法提取密钥。解决：
-1. 降级回 4.1.8（从腾讯官方下载旧版安装包）
-2. 或等待 wx-cli 新版本支持更高微信版本
-3. 降级前备份微信数据
-
-### Q7: 读取微信数据会被微信官方发现吗？
-不会。wx-cli 读取的是微信本地的数据库文件（SQLite + SQLCipher），不碰微信进程、不联网、不操作微信界面。微信完全感知不到你在读它的数据库文件。密钥提取时短暂附加进程，但关 SIP + sudo + 不重签的方式是安全的，且只在提取密钥时发生一次。
-
-### Q8: Windows 上能用吗？
-wx-cli 官方支持 Windows（有 win32-x64 预编译二进制和 PowerShell 安装脚本），加密原理和密钥格式三平台通用。但**本技能的 Windows 部分尚未实测**，基于官方文档和原理编写。Windows 上使用要点：
-- 以**管理员身份**运行 PowerShell（读取 Weixin.exe 进程内存需要）
-- 不需要关 SIP（Windows 无此机制）
-- 微信版本同样需 ~4.1.8（4.1.10+ 提取可能失败）
-- 数据目录在"文档\WeChat Files\<wxid>\"（微信设置→文件管理中查看）
-- 首次使用建议先在微信小号上验证，确认密钥提取和数据读取正常后再用于正式环境
+命令失败、密钥/版本/路径问题、群名显示为 ID、能否用大号、读取是否会被官方发现、Windows 使用要点等，已统一归入 [references/error-handling.md](references/error-handling.md)（含 E1-E10 错误映射与常见问答），遇到问题先查该文件。
 
 ## 12. 与其他技能的关系
 

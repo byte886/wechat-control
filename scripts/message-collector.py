@@ -80,21 +80,6 @@ def get_type_name(local_type):
     return f"未知(type={base})"
 
 
-def run_wx_cli(args):
-    """调用 wx-cli 命令并返回解析后的 JSON"""
-    try:
-        result = subprocess.run(
-            ["wx"] + args,
-            capture_output=True,
-            text=True,
-            timeout=30
-        )
-        if result.returncode == 0 and result.stdout.strip():
-            return json.loads(result.stdout)
-    except (json.JSONDecodeError, subprocess.TimeoutExpired, FileNotFoundError):
-        pass
-    return None
-
 # 全局变量
 DB_PATHS = {}
 MSG_DB_KEYS = {}
@@ -197,10 +182,13 @@ def get_contact_info(wxid):
 
 
 def get_session_table_name(wxid):
-    """获取会话对应的表名 Msg_<MD5(短wxid)>"""
-    # 短 wxid：去掉 _xxxxx 后缀
-    short_wxid = wxid.split("_")[0] + "_" + wxid.split("_")[1] if wxid.count("_") >= 2 else wxid
-    table_md5 = hashlib.md5(short_wxid.encode()).hexdigest()
+    """获取会话对应的表名 Msg_<MD5(完整wxid)>
+    与 wx-cli src/daemon/query.rs find_msg_shards() 一致：
+        table_name = format!("Msg_{:x}", md5::compute(username.as_bytes()))
+    username 为完整会话 wxid（不对"短 wxid"做截断）。
+    注：collect_all_messages() 直接枚举 sqlite_master 的 Msg_% 表，不依赖本函数。
+    """
+    table_md5 = hashlib.md5(wxid.encode()).hexdigest()
     return f"Msg_{table_md5}"
 
 
@@ -250,7 +238,6 @@ def collect_all_messages(since_time=0, chat_filter=None, type_filter=None, limit
                             "real_sender_id": int(parts[3]),
                             "status": int(parts[4]) if len(parts) > 4 else 0,
                             "download_status": int(parts[5]) if len(parts) > 5 else 0,
-                            "local_type": int(parts[1]),
                             "base_type": get_base_type(int(parts[1])),
                             "type_name": get_type_name(int(parts[1])),
                             "db_source": db_name,

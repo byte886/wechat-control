@@ -239,7 +239,7 @@ AI 展示："接收人：XX，内容：内容，确认发送请说'发送'"
 | 交付物 | 路径 | 说明 |
 |--------|------|------|
 | 发送消息脚本 | `scripts/wx-send.py` | 手动发消息 + 自动回复核心逻辑 |
-| 配置文件模板 | `references/auto_reply_config.example.json` | 自动回复配置模板 |
+| 配置文件 | `~/.wx-cli/auto_reply_config.json` | 自动回复配置，运行时由 `wx-send.py auto-reply config` 生成（无随仓模板） |
 | 规范文档 | `phase3-write-spec.md` | 本文档 |
 | SKILL 更新 | `SKILL.md` 第10章 | 写操作使用说明 |
 | PRD 更新 | `PRD.md` 模块六 | 写操作需求（标注探索性质） |

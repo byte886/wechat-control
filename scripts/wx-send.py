@@ -34,52 +34,6 @@ def run_cmd(cmd, timeout=30):
     return result.returncode, result.stdout.strip(), result.stderr.strip()
 
 
-def activate_wechat():
-    run_cmd('osascript -e \'tell application "WeChat" to activate\'')
-    time.sleep(1.5)
-
-
-def wechat_search(name):
-    activate_wechat()
-    run_cmd("cliclick kp:cmd-f")
-    time.sleep(0.8)
-    run_cmd("cliclick kp:cmd-a")
-    time.sleep(0.2)
-    run_cmd("cliclick kp:delete")
-    time.sleep(0.2)
-    run_cmd(f'cliclick type:"{name}"')
-    time.sleep(1.5)
-    run_cmd("cliclick kp:return")
-    time.sleep(2)
-
-
-def wechat_type_message(message):
-    run_cmd("cliclick c:500,800")
-    time.sleep(0.5)
-    run_cmd("cliclick kp:cmd-a")
-    time.sleep(0.2)
-    run_cmd("cliclick kp:delete")
-    time.sleep(0.2)
-    run_cmd(f'cliclick type:"{message}"')
-    time.sleep(0.8)
-
-
-def wechat_send():
-    run_cmd("cliclick kp:return")
-    time.sleep(1)
-
-
-def verify_recipient(expected_name):
-    code, title, _ = run_cmd(
-        'osascript -e \'tell application "System Events" to tell process "WeChat" to get name of window 1\''
-    )
-    if code == 0 and title:
-        if expected_name in title or title in expected_name:
-            return True, title
-        return False, title
-    return None, "cannot get window title"
-
-
 def send_message(to, message, confirm=True, no_verify=False):
     """发送消息到指定聊天对象。使用已验证的 send_message.sh（Cmd+F方案）。"""
     result = {
@@ -96,10 +50,12 @@ def send_message(to, message, confirm=True, no_verify=False):
         return result
     try:
         script_path = Path(__file__).parent / "wechat-ui" / "send_message.sh"
-        cmd = f'bash "{script_path}" "{to}" "{message}"'
+        # 用 list 参数 + shell=False，避免 to/message 含引号或 $() 时的 shell 注入
+        cmd_args = ["bash", str(script_path), to, message]
         if no_verify:
-            cmd += " --no-verify"
-        code, stdout, stderr = run_cmd(cmd, timeout=60)
+            cmd_args.append("--no-verify")
+        proc = subprocess.run(cmd_args, capture_output=True, text=True, timeout=60)
+        code, stdout, stderr = proc.returncode, proc.stdout.strip(), proc.stderr.strip()
         if code == 0 and "发送完成" in stdout:
             result["success"] = True
             result["stdout"] = stdout[-500:]
@@ -495,7 +451,7 @@ def cmd_auto_reply(args):
                     if entry.get("blocked"):
                         print(f"  Block reason: {entry.get('block_reason', '')}")
                     print()
-                except:
+                except (json.JSONDecodeError, OSError):
                     print(line)
         else:
             print("No log entries")

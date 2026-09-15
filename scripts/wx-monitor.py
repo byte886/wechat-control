@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 wx-monitor.py - 微信群主动监控与推送工具
-基于 jackwener/wx-cli，实现重要消息实时推送、每日总结、飞书同步。
+基于 byte886/wx-cli（jackwener/wx-cli 的多账号 fork），实现重要消息实时推送、每日总结、飞书同步。
 
 用法:
   python3 wx-monitor.py recommend          # 推荐监控群
@@ -20,6 +20,7 @@ wx-monitor.py - 微信群主动监控与推送工具
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -27,7 +28,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 # ============ 配置 ============
-WX_CLI = "/usr/local/bin/wx"
+WX_CLI = shutil.which("wx") or "wx"
 CONFIG_DIR = Path.home() / ".wx-cli"
 CONFIG_FILE = CONFIG_DIR / "monitor_config.json"
 STATE_FILE = CONFIG_DIR / "monitor_state.json"
@@ -362,17 +363,19 @@ def cmd_monitor(once=False):
             total_new = 0
             total_pushed = 0
 
+            # new-messages 是全局接口（与具体群无关），整轮只拉一次，
+            # 再按 chat 字段过滤分配给各群，避免 N 个群重复拉取 N 次
+            new_msgs_data = run_wx(["new-messages", "--limit", "100", "--json"])
+            if "error" in new_msgs_data:
+                print(f"  ⚠️  获取新消息失败: {new_msgs_data['error']}")
+                all_msgs = []
+            else:
+                all_msgs = new_msgs_data.get("messages", [])
+
             for group in config["monitor_groups"]:
                 group_id = group["id"]
                 group_name = group.get("name", group_id)
 
-                # 获取新消息
-                new_msgs_data = run_wx(["new-messages", "--limit", "100", "--json"])
-                if "error" in new_msgs_data:
-                    print(f"  ⚠️  获取新消息失败: {new_msgs_data['error']}")
-                    continue
-
-                all_msgs = new_msgs_data.get("messages", [])
                 # 筛选当前群的消息
                 group_msgs = [m for m in all_msgs if m.get("chat") == group_id]
 
