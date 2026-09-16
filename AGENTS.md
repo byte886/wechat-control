@@ -73,7 +73,7 @@ git push origin main             # ★ 上层 main 无 upstream，必须显式 o
 | 层 | 位置 | 装什么 |
 |---|---|---|
 | 运行面 | `SKILL.md`、`references/`、`scripts/`、`mcp-server/` | AI 用技能时加载：入口、命令、SOP、转写/监控/发送脚本、MCP server |
-| 开发面 | `docs/`（PRD、ROADMAP、FEATURES、阶段 spec、监控规划、数据字典） | 为什么这么设计、需求验收、路线 |
+| 开发面 | `docs/`（PRD 含附录 A-D、ROADMAP、database-schema） | 为什么这么设计、需求验收、路线、表结构字典 |
 | 立项 | `docs/project-initiation/`（00 总纲 … 05 治理卡） | 回溯性立项六件套、阶段门 G1/G2/G3、工单切片 |
 | 第三方 | `third-party/wx-cli/`（嵌套 submodule）、`tools/silk-v3-decoder/` | wx-cli 本人 fork、SILK 解码 |
 | 本机私密（不入仓） | `~/.wx-cli/`（config、all_keys、accounts、`private/`） | 密钥、账号配置、飞书归档目标等个人标识 |

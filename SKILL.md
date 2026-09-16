@@ -95,7 +95,7 @@ compatibility: "macOS (Intel/Apple Silicon) / Windows / Linux。微信版本锁�
 ## 6. 写操作（探索性质，严格隔离）
 
 只用小号、逐次确认、频率与黑名单限制、发送前 OCR 校验（红线见 §2）。
-- UI 发送：`bash scripts/wechat-ui/send_message.sh "<对象>" "<内容>" [--no-verify]`，采用 Cmd+F 搜索＋回车方案（纯键盘、不依赖坐标）；7 步流程与健壮性见开发面 `docs/phase3-write-spec.md`。
+- UI 发送：`bash scripts/wechat-ui/send_message.sh "<对象>" "<内容>" [--no-verify]`，采用 Cmd+F 搜索＋回车方案（纯键盘、不依赖坐标）；7 步流程与健壮性见开发面 `docs/PRD.md` 附录 C。
 - 自动回复框架：`python3 scripts/wx-send.py auto-reply run --interval 60`（探索性质、模板回复、仅文字、需前台运行）。
 - 新号写链路验证见 [new-account-sop.md](references/new-account-sop.md) §A.10。
 

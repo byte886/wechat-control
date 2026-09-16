@@ -109,7 +109,7 @@ python3 scripts/voice-monitor.py once        # 单次检查（首次有 30 秒�
 python3 scripts/voice-monitor.py status
 python3 scripts/wx-monitor.py config list    # 通用监控配置（按需 add-group）
 ```
-切号后必须清旧状态，否则漏消息或重复处理。状态/配置文件：`~/.wx-cli/voice_monitor_state.json`、`monitor_config.json`、`monitor_state.json`。监控规划见开发面 `docs/monitoring-plan.md`（运行时不加载）；实时监听器与 daemon 见 [realtime-and-daemon.md](realtime-and-daemon.md)。
+切号后必须清旧状态，否则漏消息或重复处理。状态/配置文件：`~/.wx-cli/voice_monitor_state.json`、`monitor_config.json`、`monitor_state.json`。监控规划见开发面 `docs/PRD.md` 附录 B（运行时不加载）；实时监听器与 daemon 见 [realtime-and-daemon.md](realtime-and-daemon.md)。
 
 ## A.10 写操作功能验证（仅小号）
 ```bash
@@ -118,7 +118,7 @@ bash scripts/wechat-ui/send_message.sh "文件传输助手" "测试消息" --no-
 python3 scripts/wx-send.py auto-reply config add-keyword "在吗"
 python3 scripts/wx-send.py auto-reply run --interval 60
 ```
-写操作仅限小号、逐次人工确认，风控要求见 SKILL §6，UI 方案细节见开发面 `docs/phase3-write-spec.md`。
+写操作仅限小号、逐次人工确认，风控要求见 SKILL §6，UI 方案细节见开发面 `docs/PRD.md` 附录 C。
 
 ## A.11 完成检查清单
 

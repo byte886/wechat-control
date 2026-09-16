@@ -100,9 +100,8 @@ wechat-control/
 ├── SKILL.md                    # AI Agent 技能文档（主文档）
 ├── README.md                   # 项目介绍（本文件）
 ├── docs/                       # 开发面（AI 运行时不加载）：脱敏设计文档随公开仓
-│   ├── PRD.md / FEATURES.md / ROADMAP.md
-│   ├── phase2-monitor-spec.md / phase3-write-spec.md / wechat-ai-agent-spec.md
-│   ├── monitoring-plan.md      # 以上 7 篇为可公开的通用设计文档
+│   ├── PRD.md                  # 产品需求文档（含附录 A-D：各阶段 spec、监控/写操作技术规格、治理规范）
+│   ├── ROADMAP.md              # 路线图与当前状态看板
 │   └── database-schema.md      # 微信库表结构字典（只留结构、已脱敏），明文随仓
 # 注：含个人数据的文件三种归宿——脱敏后明文随仓 / 无法脱敏则加密 .enc 随仓 / 无价值删除，
 #     不挪到仓库外；数据字典已剥离账号、会话分表清单、条数/大小；实测日志 test-cases.md 已删。
@@ -122,7 +121,7 @@ wechat-control/
 └── third-party/                # 本人 fork 的多账号改造版 wx-cli（git 子模块；单账号只读可用 npm 官方版）
 ```
 
-> 本仓为 **public 公开仓**，入仓内容（含全部历史）一旦 push 即对全世界可见，判据是"内容能否公开"，与它是 SKILL、脚本还是 `docs/` 无关。含个人数据的文件只有三种归宿：脱敏成通用内容后明文随仓 / 无法脱敏则加密为 `.enc` 随仓（无主口令解不开）/ 无价值删除，**不挪到仓库外**。`docs/` 下 7 篇 PRD/路线图/阶段 spec/监控规划是通用设计文档，随仓公开但 **AI 运行时不加载**；数据字典 `docs/database-schema.md` 只保留库/表/字段结构（已剥离账号、`Msg_<MD5>` 会话分表清单、记录条数、库大小），明文随仓；本人实测日志不保留。加载边界见 [SKILL.md](SKILL.md) §0。
+> 本仓为 **public 公开仓**，入仓内容（含全部历史）一旦 push 即对全世界可见，判据是"内容能否公开"，与它是 SKILL、脚本还是 `docs/` 无关。含个人数据的文件只有三种归宿：脱敏成通用内容后明文随仓 / 无法脱敏则加密为 `.enc` 随仓（无主口令解不开）/ 无价值删除，**不挪到仓库外**。`docs/` 下 PRD（含附录）与 ROADMAP 是通用设计文档，随仓公开但 **AI 运行时不加载**；数据字典 `docs/database-schema.md` 只保留库/表/字段结构（已剥离账号、`Msg_<MD5>` 会话分表清单、记录条数、库大小），明文随仓；本人实测日志不保留。加载边界见 [SKILL.md](SKILL.md) §0。
 
 ## 📊 支持的消息类型
 
@@ -166,10 +165,10 @@ wechat-control/
 - `references/` — 按需加载的操作参考：安装与平台、命令详解、新号登记、多账号、语音链路、监控、实时监听与 daemon、错误/歧义/时间/大消息量/总结模板（**完整索引见 SKILL.md §5**）
 - [mcp-server/README.md](mcp-server/README.md) — 可选 MCP 监控服务
 
-**设计/规划文档（已脱敏、随公开仓；AI 运行时不加载，位于 `docs/`，共 7 篇）**
-- [PRD.md](docs/PRD.md) · [FEATURES.md](docs/FEATURES.md) · [ROADMAP.md](docs/ROADMAP.md)
-- [phase2-monitor-spec.md](docs/phase2-monitor-spec.md) · [phase3-write-spec.md](docs/phase3-write-spec.md) · [wechat-ai-agent-spec.md](docs/wechat-ai-agent-spec.md) · [monitoring-plan.md](docs/monitoring-plan.md)
-- `database-schema.md`：微信本地数据库的**表结构字典**（明文随仓，只含库/表/字段，已剔除账号 wxid/昵称、具体会话分表清单、记录条数、库大小等个人/统计数据，不含消息正文）；本人实测日志 `test-cases.md` 无长期价值，已删除、不保留
+**设计/规划文档（已脱敏、随公开仓；AI 运行时不加载，位于 `docs/`）**
+- [PRD.md](docs/PRD.md) — 产品需求文档（正文：七模块需求与验收；附录 A-D：第一阶段决策、监控技术规格、写操作技术规格、需求澄清与治理规范）
+- [ROADMAP.md](docs/ROADMAP.md) — 开发路线图与「当前状态」看板
+- `database-schema.md`：微信本地数据库的**表结构字典**（明文随仓，只含库/表/字段，已剔除账号 wxid/昵称、具体会话分表清单、记录条数、库大小等个人/统计数据，不含消息正文）
 
 ## 🛠️ 技术栈
 

@@ -1,7 +1,7 @@
 # 微信群 AI Agent · 开发路线图（Roadmap）
 
 > 基于 2026-09-10 spec 规范和共识小结制定。按优先级推动，每完成一项更新状态。
-> 关联文档：wechat-ai-agent-spec.md、SKILL.md
+> 关联文档：PRD.md（含附录 A-D）、SKILL.md
 >
 > **最后状态同步：2026-09-17**（新增 M-11「合并聊天记录识别与拆分」监控子功能待办，MCP-3 归为其已验证子集；C-5 视频细化为"解密导出＋内容理解"两步、新增 C-6 Windows 平台适配候选；此前回写：MCP 连接器、语音免播放、M-5/M-6 外推未闭环、M-10 邮箱待办、W-6 撤回不做、S-1 飞书待重做、多账号 v2 已完成；新增仓库根 `AGENTS.md` AI 接手手册（冷启动/续接两路径＋submodule 提交约定）与顶部「当前状态」看板，飞书账号/手机号标识自公开仓脱敏、外移至本机 `~/.wx-cli/private/`）
 
@@ -112,7 +112,7 @@
 
 ## 第二阶段：主动监控推送 + 飞书同步
 
-> Clarify 已完成（2026-09-10），spec 已写入 `phase2-monitor-spec.md`。核心功能已开发完成，飞书同步待实现。
+> Clarify 已完成（2026-09-10），spec 已并入 `PRD.md` 附录 B。核心功能已开发完成，飞书同步待实现。
 
 ### 主动监控推送（已完成）
 
@@ -144,7 +144,7 @@
 - ✅ 监控脚本：`scripts/wx-monitor.py`（recommend/monitor/daily/config/status 命令）
 - ✅ 配置文件：`~/.wx-cli/monitor_config.json`
 - ✅ 状态文件：`~/.wx-cli/monitor_state.json`
-- ✅ spec 文档：`phase2-monitor-spec.md`（10 条 User Stories）
+- ✅ spec 文档：已并入 `PRD.md` 附录 B（10 条 User Stories）
 - ✅ SKILL 文档：第 9 章"主动监控与每日总结"
 - ⏳ 飞书同步：合并在 `scripts/wx-monitor.py` 的 `daily --sync` 内（尚未接线，见脚本 TODO），不另建 feishu_sync.py
 
