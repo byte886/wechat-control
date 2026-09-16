@@ -153,6 +153,74 @@ def is_important_message(msg, config):
     return False, ""
 
 
+def expand_merged_record(msg):
+    """展开合并聊天记录：调用 message-collector 的统一解析器，返回子消息摘要。
+    用于监控推送时自动展开合并记录内容，而不是只显示"合并聊天记录"。"""
+    try:
+        import importlib.util as _ilu
+        from pathlib import Path as _Path
+        # message-collector.py 文件名含连字符，需用 importlib 加载
+        mc_path = _Path(__file__).parent / "message-collector.py"
+        spec = _ilu.spec_from_file_location("message_collector", str(mc_path))
+        mc = _ilu.module_from_spec(spec)
+        spec.loader.exec_module(mc)
+        mc.load_keys()
+
+        chat_id = msg.get("chat", "")
+        local_id = msg.get("local_id", "")
+        if not chat_id or not local_id:
+            return None
+
+        import hashlib as _hl
+        table_name = f"Msg_{_hl.md5(chat_id.encode()).hexdigest()}"
+
+        # 构造 collector 兼容的 msg dict
+        ts = msg.get("timestamp", "")
+        try:
+            create_time = int(ts) if ts else 0
+        except (ValueError, TypeError):
+            create_time = 0
+
+        collector_msg = {
+            'table_name': table_name,
+            'local_id': int(local_id) if str(local_id).isdigit() else local_id,
+            'local_type': 81604378673,  # 合并聊天记录
+            'create_time': create_time,
+            'db_source': 'message_0',
+            'type_name': '合并聊天记录',
+        }
+
+        result = mc.parse_message(collector_msg)
+        if not result or 'parsed' not in result:
+            return None
+
+        parsed = result.get('parsed', {})
+        sub_msgs = parsed.get('sub_messages', [])
+        if not sub_msgs:
+            return None
+
+        # 生成摘要：类型分布 + 前几条文本
+        type_dist = parsed.get('sub_message_types', {})
+        lines = [f"📋 合并聊天记录（共 {len(sub_msgs)} 条子消息）"]
+        if type_dist:
+            dist_str = "、".join(f"{t}:{c}" for t, c in sorted(type_dist.items(), key=lambda x: -x[1]))
+            lines.append(f"   类型: {dist_str}")
+        # 列出前 5 条有文本内容的子消息
+        shown = 0
+        for sm in sub_msgs:
+            text = sm.get('text', '') or sm.get('content', '')
+            if text and shown < 5:
+                sender = sm.get('sender', '')
+                prefix = f"{sender}: " if sender else ""
+                lines.append(f"   {prefix}{text[:80]}")
+                shown += 1
+        if len(sub_msgs) > shown:
+            lines.append(f"   ...还有 {len(sub_msgs) - shown} 条")
+        return "\n".join(lines)
+    except Exception as e:
+        return f"   (合并记录展开失败: {str(e)[:60]})"
+
+
 def format_push_message(msg, reason, chat_name):
     """格式化推送消息"""
     sender = msg.get("sender", "未知")
@@ -160,9 +228,16 @@ def format_push_message(msg, reason, chat_name):
     content = msg.get("content", "")
     msg_type = msg.get("type", "")
 
+    # 合并聊天记录自动展开（M-11）
+    is_merged = ("合并" in msg_type) or ("聊天记录" in content) or ("的聊天记录" in content)
+    if is_merged:
+        expanded = expand_merged_record(msg)
+        if expanded:
+            content = expanded
+
     # 长内容截断
-    if len(content) > 200:
-        content = content[:200] + "..."
+    if len(content) > 500:
+        content = content[:500] + "..."
 
     # 特殊类型提示
     type_hint = ""
@@ -178,6 +253,8 @@ def format_push_message(msg, reason, chat_name):
         type_hint = "[名片] "
     elif msg_type == "链接/文件":
         type_hint = "[链接] "
+    elif is_merged:
+        type_hint = ""  # 合并记录已展开，不需要额外提示
 
     return f"""🔔 重要消息推送
 ━━━━━━━━━━━━━━━━
