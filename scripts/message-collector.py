@@ -136,9 +136,9 @@ def load_keys():
         print(f"❌ 数据目录不存在: {db_dir}", file=sys.stderr)
         sys.exit(1)
 
-    # xwechat_files/<wxid> = db_dir 的父目录的父目录
+    # xwechat_files/<wxid> = db_dir 的父目录
     # db_dir = .../xwechat_files/<wxid>/db_storage
-    WXCHAT_BASE = db_dir.parent.parent
+    WXCHAT_BASE = db_dir.parent
 
     DB_PATHS = {
         "message_0": db_dir / "message" / "message_0.db",
@@ -886,18 +886,40 @@ def _make_attachment_id(chat_wxid, local_id, create_time, kind):
     return b64.urlsafe_b64encode(payload.encode()).decode().rstrip('=')
 
 
+def _month_candidates(create_time):
+    """生成消息时间所在月及前后各一月的 YYYY-MM 列表"""
+    dt = datetime.fromtimestamp(create_time)
+    result = []
+    for delta in [-1, 0, 1]:
+        m = dt.month + delta; y = dt.year
+        while m > 12: m -= 12; y += 1
+        while m < 1: m += 12; y -= 1
+        result.append(f"{y:04d}-{m:02d}")
+    return result
+
+
+def _ensure_subdir(output_dir, subdir):
+    """确保输出子目录存在，返回路径"""
+    p = Path(output_dir) / subdir
+    p.mkdir(parents=True, exist_ok=True)
+    return p
+
+
 def export_image(msg, output_dir):
-    """图片导出：构造 attachment_id → 调 wx extract 解密"""
+    """图片导出：构造 attachment_id → 调 wx extract 解密（自动选高清/标准/缩略图）"""
     chat_wxid = get_chat_wxid_from_table(msg['table_name'])
     if not chat_wxid:
         return {'status': 'skip', 'reason': '无法反查 chat wxid'}
     att_id = _make_attachment_id(chat_wxid, msg['local_id'], msg['create_time'], 'image')
-    out_path = Path(output_dir) / f"img_{msg['local_id']}.jpg"
+    out_dir = _ensure_subdir(output_dir, 'img')
+    out_path = out_dir / f"img_{msg['local_id']}.jpg"
     try:
         r = subprocess.run(['wx', 'extract', att_id, '--output', str(out_path), '--overwrite'],
             capture_output=True, timeout=30)
         if r.returncode == 0 and out_path.exists():
-            return {'status': 'ok', 'path': str(out_path), 'size': out_path.stat().st_size}
+            size = out_path.stat().st_size
+            note = '高清原图' if size > 100000 else ('标准' if size > 10000 else '缩略图')
+            return {'status': 'ok', 'path': str(out_path), 'size': size, 'note': note}
         err = r.stderr.decode(errors='replace').strip()[:120]
         return {'status': 'fail', 'reason': err or 'wx extract 返回非零'}
     except Exception as e:
@@ -905,7 +927,7 @@ def export_image(msg, output_dir):
 
 
 def export_video(msg, output_dir):
-    """视频导出：查 resource md5 → 从 msg/video/<月>/<md5>.mp4 复制（已解密明文）"""
+    """视频导出：查 resource md5 → 从 msg/video/ 复制 .mp4；未下载时兜底导出缩略图"""
     chat_wxid = get_chat_wxid_from_table(msg['table_name'])
     file_md5 = get_resource_md5(chat_wxid, msg['local_id'], msg['create_time'], 43)
     if not file_md5:
@@ -913,32 +935,32 @@ def export_video(msg, output_dir):
     if not WXCHAT_BASE:
         return {'status': 'fail', 'reason': 'WXCHAT_BASE 未设置'}
     video_dir = WXCHAT_BASE / 'msg' / 'video'
-    # 按消息时间所在月份 + 前后各一个月搜索
-    dt = datetime.fromtimestamp(msg['create_time'])
-    candidates = []
-    for delta in [-1, 0, 1]:
-        m = dt.month + delta
-        y = dt.year
-        while m > 12: m -= 12; y += 1
-        while m < 1: m += 12; y -= 1
-        candidates.append(f"{y:04d}-{m:02d}")
-    for ym in candidates:
-        for suffix in ['.mp4', '_raw.mp4']:
+    out_dir = _ensure_subdir(output_dir, 'video')
+    import shutil
+    # 1. 优先找完整视频（原画 > 压缩版）
+    for ym in _month_candidates(msg['create_time']):
+        for suffix in ['_raw.mp4', '.mp4']:
             src = video_dir / ym / f"{file_md5}{suffix}"
             if src.exists():
-                out_path = Path(output_dir) / f"video_{msg['local_id']}{suffix}"
-                import shutil
+                out_path = out_dir / f"video_{msg['local_id']}{suffix}"
                 shutil.copy2(src, out_path)
                 return {'status': 'ok', 'path': str(out_path), 'size': out_path.stat().st_size,
                         'note': '原画' if suffix == '_raw.mp4' else '压缩版'}
-    return {'status': 'skip', 'reason': f'视频未下载到本地（md5={file_md5[:16]}…），仅缩略图可用'}
+    # 2. 兜底：导出缩略图
+    for ym in _month_candidates(msg['create_time']):
+        thumb = video_dir / ym / f"{file_md5}_thumb.jpg"
+        if thumb.exists():
+            out_path = out_dir / f"video_{msg['local_id']}_thumb.jpg"
+            shutil.copy2(thumb, out_path)
+            return {'status': 'ok', 'path': str(out_path), 'size': out_path.stat().st_size,
+                    'note': '仅缩略图（视频未下载到本地，在微信中点击播放后可导出完整视频）'}
+    return {'status': 'skip', 'reason': f'视频未下载且无缩略图（md5={file_md5[:16]}…）'}
 
 
-def export_voice(msg, output_dir):
-    """语音导出：从 media_0.db VoiceInfo 拿 SILK V3 BLOB → 写 .sil 文件"""
+def export_voice(msg, output_dir, transcode=False):
+    """语音导出：从 media_0.db VoiceInfo 拿 SILK V3 BLOB → 写 .sil；可选转 WAV"""
     if not MEDIA_DB_KEY:
         return {'status': 'skip', 'reason': '无 media_0.db 密钥'}
-    # 用 hex() 取 BLOB
     rows = sqlcipher_query(DB_PATHS["media"], MEDIA_DB_KEY,
         f"SELECT hex(voice_data), length(voice_data) FROM VoiceInfo WHERE local_id = {msg['local_id']};")
     if not rows:
@@ -948,45 +970,127 @@ def export_voice(msg, output_dir):
         return {'status': 'fail', 'reason': 'voice_data 为空'}
     try:
         silk_bytes = bytes.fromhex(parts[0].strip())
-        out_path = Path(output_dir) / f"voice_{msg['local_id']}.sil"
-        out_path.write_bytes(silk_bytes)
-        return {'status': 'ok', 'path': str(out_path), 'size': len(silk_bytes),
-                'note': 'SILK V3 格式，可用 silk-v3-decoder 转 WAV，voice-transcribe.py 可转文字'}
+        out_dir = _ensure_subdir(output_dir, 'voice')
+        silk_path = out_dir / f"voice_{msg['local_id']}.sil"
+        silk_path.write_bytes(silk_bytes)
+        note = 'SILK V3 格式'
+        out_path = silk_path
+
+        if transcode:
+            # 调 silk-v3-decoder 转 WAV（用法：converter.sh <input.sil> wav，输出 <input>.wav）
+            converter = SKILL_DIR / 'tools' / 'silk-v3-decoder' / 'converter.sh'
+            if converter.exists():
+                r = subprocess.run(['bash', str(converter), str(silk_path), 'wav'],
+                    capture_output=True, timeout=30)
+                generated_wav = silk_path.with_suffix('.wav')
+                if r.returncode == 0 and generated_wav.exists():
+                    wav_path = out_dir / f"voice_{msg['local_id']}.wav"
+                    generated_wav.rename(wav_path)
+                    out_path = wav_path
+                    note = 'WAV 格式（已从 SILK V3 转码，24kHz mono）'
+                    silk_path.unlink(missing_ok=True)
+                else:
+                    note = 'SILK V3 格式（WAV 转码失败，保留原始格式）'
+            else:
+                note = 'SILK V3 格式（未找到 silk-v3-decoder，跳过转码）'
+
+        return {'status': 'ok', 'path': str(out_path), 'size': out_path.stat().st_size, 'note': note}
     except Exception as e:
         return {'status': 'fail', 'reason': str(e)[:120]}
 
 
 def export_file(msg, output_dir):
-    """文件导出：从 message_content 解析文件名 → 从 msg/file/<月>/ 复制（明文）"""
+    """文件导出：从 message_content 解析文件名 → 从 msg/file/ 复制（明文）"""
     raw, _ = fetch_raw_content(msg)
     if not raw:
         return {'status': 'skip', 'reason': '无法获取消息内容'}
-    # 文件名在 <title> 或 <filename> 标签
     filename = _xml_get(raw, 'title') or _xml_get(raw, 'filename') or _xml_get(raw, 'name')
     if not filename:
         return {'status': 'skip', 'reason': '无法解析文件名'}
     if not WXCHAT_BASE:
         return {'status': 'fail', 'reason': 'WXCHAT_BASE 未设置'}
     file_dir = WXCHAT_BASE / 'msg' / 'file'
-    dt = datetime.fromtimestamp(msg['create_time'])
-    candidates = []
-    for delta in [-1, 0, 1]:
-        m = dt.month + delta; y = dt.year
-        while m > 12: m -= 12; y += 1
-        while m < 1: m += 12; y -= 1
-        candidates.append(f"{y:04d}-{m:02d}")
+    out_dir = _ensure_subdir(output_dir, 'file')
     import shutil
-    for ym in candidates:
+    for ym in _month_candidates(msg['create_time']):
         src = file_dir / ym / filename
         if src.exists():
             safe_name = f"file_{msg['local_id']}_{filename}"
-            out_path = Path(output_dir) / safe_name
+            out_path = out_dir / safe_name
             shutil.copy2(src, out_path)
             return {'status': 'ok', 'path': str(out_path), 'size': out_path.stat().st_size}
     return {'status': 'skip', 'reason': f'文件未找到（{filename}），可能未下载或已清理'}
 
 
-def export_message(msg, output_dir):
+def export_merged_record(msg, output_dir, transcode=False):
+    """合并聊天记录内媒体导出：解析子消息，尝试导出图片/视频/语音/文件。
+    合并记录转发时媒体通常不缓存到本地，大部分会跳过；已缓存的视频/文件可直接复制。"""
+    raw, _ = fetch_raw_content(msg)
+    if not raw:
+        return {'status': 'skip', 'reason': '无法获取合并记录内容'}
+    if not WXCHAT_BASE:
+        return {'status': 'fail', 'reason': 'WXCHAT_BASE 未设置'}
+
+    results = []
+    # 图片子消息（datatype=2）：fullmd5 标签
+    for i, m in enumerate(re.finditer(r'<dataitem[^>]*datatype="2"[^>]*>(.*?)</dataitem>', raw, re.DOTALL)):
+        fullmd5 = _xml_get(m.group(1), 'fullmd5')
+        if fullmd5:
+            # 全局搜索 .dat 文件
+            found = None
+            for p in (WXCHAT_BASE / 'msg' / 'attach').rglob(f"{fullmd5}*.dat"):
+                found = p; break
+            if found:
+                results.append({'type': '图片', 'status': 'skip',
+                    'reason': f'已缓存但解密需原始会话信息（{found.name}），暂不支持自动解密'})
+            else:
+                results.append({'type': '图片', 'status': 'skip',
+                    'reason': '未缓存到本地（需在微信中点击查看原图后才能导出）'})
+    # 视频子消息（datatype=4）：videomd5 或 md5
+    for m in re.finditer(r'<dataitem[^>]*datatype="4"[^>]*>(.*?)</dataitem>', raw, re.DOTALL):
+        vmd5 = _xml_get(m.group(1), 'videomd5') or _xml_get(m.group(1), 'md5')
+        if vmd5:
+            video_dir = WXCHAT_BASE / 'msg' / 'video'
+            found = None
+            for p in video_dir.rglob(f"{vmd5}*.mp4"):
+                found = p; break
+            if found:
+                out_dir = _ensure_subdir(output_dir, 'video')
+                import shutil
+                out_path = out_dir / f"merged_video_{msg['local_id']}_{found.name}"
+                shutil.copy2(found, out_path)
+                results.append({'type': '视频', 'status': 'ok', 'path': str(out_path),
+                    'size': out_path.stat().st_size, 'note': '合并记录内视频'})
+            else:
+                results.append({'type': '视频', 'status': 'skip', 'reason': '未下载到本地'})
+    # 文件子消息（datatype=6）：filename
+    for m in re.finditer(r'<dataitem[^>]*datatype="6"[^>]*>(.*?)</dataitem>', raw, re.DOTALL):
+        fname = _xml_get(m.group(1), 'title') or _xml_get(m.group(1), 'filename')
+        if fname:
+            file_dir = WXCHAT_BASE / 'msg' / 'file'
+            found = None
+            for p in file_dir.rglob(fname):
+                found = p; break
+            if found:
+                out_dir = _ensure_subdir(output_dir, 'file')
+                import shutil
+                out_path = out_dir / f"merged_file_{msg['local_id']}_{fname}"
+                shutil.copy2(found, out_path)
+                results.append({'type': '文件', 'status': 'ok', 'path': str(out_path),
+                    'size': out_path.stat().st_size, 'note': '合并记录内文件'})
+            else:
+                results.append({'type': '文件', 'status': 'skip', 'reason': f'未找到（{fname}）'})
+
+    if not results:
+        return {'status': 'skip', 'reason': '合并记录内无可导出媒体（全是文本/链接/表情等）'}
+    ok = sum(1 for r in results if r['status'] == 'ok')
+    skip = sum(1 for r in results if r['status'] == 'skip')
+    return {'status': 'ok' if ok > 0 else 'skip',
+            'note': f'合并记录内媒体：成功 {ok} / 跳过 {skip}',
+            'details': results}
+
+
+def export_message(msg, output_dir, transcode=False):
     """统一导出分发：按消息类型选择导出方式"""
     base = get_base_type(msg['local_type'])
     if base == 3:
@@ -994,12 +1098,13 @@ def export_message(msg, output_dir):
     elif base == 43:
         return export_video(msg, output_dir)
     elif base == 34:
-        return export_voice(msg, output_dir)
+        return export_voice(msg, output_dir, transcode=transcode)
     elif base == 49:
-        # appmsg 卡片类：可能是文件（appmsg type 6/2000）
         appmsg_type = msg['local_type'] >> 32
         if appmsg_type in (6, 2000):
             return export_file(msg, output_dir)
+        elif appmsg_type == 19:
+            return export_merged_record(msg, output_dir, transcode=transcode)
         return {'status': 'skip', 'reason': f'appmsg 类型 {appmsg_type} 不支持导出'}
     else:
         return {'status': 'skip', 'reason': f'类型 {msg.get("type_name", base)} 无需导出'}
@@ -1232,7 +1337,7 @@ def cmd_parse(since=None, limit=20, msg_type=None, output_json=False):
     print()
 
 
-def cmd_export(output_dir="./wechat_exports", since=None, limit=20, msg_type=None):
+def cmd_export(output_dir="./wechat_exports", since=None, limit=20, msg_type=None, transcode=False):
     """统一导出：收集最近消息，对可导出类型执行导出，输出清单"""
     load_keys()
 
@@ -1252,6 +1357,8 @@ def cmd_export(output_dir="./wechat_exports", since=None, limit=20, msg_type=Non
     print("=" * 70)
     print(f"媒体导出（共扫描 {len(messages)} 条消息）")
     print(f"输出目录: {out_path.resolve()}")
+    if transcode:
+        print("语音转 WAV: 已开启")
     print("=" * 70)
 
     stats = {'ok': 0, 'skip': 0, 'fail': 0}
@@ -1259,15 +1366,25 @@ def cmd_export(output_dir="./wechat_exports", since=None, limit=20, msg_type=Non
 
     for i, msg in enumerate(messages, 1):
         type_name = msg.get('type_name', '?')
-        result = export_message(msg, str(out_path))
+        result = export_message(msg, str(out_path), transcode=transcode)
         status = result.get('status', 'skip')
         stats[status] = stats.get(status, 0) + 1
         type_stats[type_name] = type_stats.get(type_name, 0) + 1
 
         if status == 'ok':
-            size_kb = result.get('size', 0) / 1024
-            note = f" ({result['note']})" if 'note' in result else ""
-            print(f"  [{i:3d}] ✅ {type_name:<8} {Path(result['path']).name} ({size_kb:.1f}KB){note}")
+            # 合并记录可能有多个子结果
+            if 'details' in result:
+                note = result.get('note', '')
+                print(f"  [{i:3d}] ✅ {type_name:<8} {note}")
+                for d in result['details']:
+                    if d['status'] == 'ok':
+                        size_kb = d.get('size', 0) / 1024
+                        dnote = f" ({d.get('note', '')})" if d.get('note') else ""
+                        print(f"         └─ {d['type']}: {Path(d['path']).name} ({size_kb:.1f}KB){dnote}")
+            else:
+                size_kb = result.get('size', 0) / 1024
+                note = f" ({result['note']})" if 'note' in result else ""
+                print(f"  [{i:3d}] ✅ {type_name:<8} {Path(result['path']).name} ({size_kb:.1f}KB){note}")
         elif status == 'fail':
             print(f"  [{i:3d}] ❌ {type_name:<8} id={msg['local_id']}: {result.get('reason', '?')}")
         # skip 不打印，太吵
@@ -1313,6 +1430,7 @@ def main():
     exp_parser.add_argument("--limit", type=int, default=20, help="处理最近 N 条消息")
     exp_parser.add_argument("--since", type=str, help="起始日期（YYYY-MM-DD）")
     exp_parser.add_argument("--type", type=int, help="只导出指定类型（local_type，如 3=图片 43=视频 34=语音）")
+    exp_parser.add_argument("--transcode", action="store_true", help="语音导出时自动转 WAV（SILK V3 → WAV）")
 
     args = parser.parse_args()
 
@@ -1346,6 +1464,7 @@ def main():
             since=args.since,
             limit=args.limit,
             msg_type=args.type,
+            transcode=args.transcode,
         )
 
 
