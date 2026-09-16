@@ -31,7 +31,25 @@ from fastmcp.server.lifespan import lifespan
 from fastmcp.server.dependencies import get_context
 
 # ============ 配置 ============
-WX_CLI_BIN = shutil.which("wx") or "wx"
+def _resolve_wx_bin() -> str:
+    """定位 wx 可执行文件。
+
+    MCP server 常由 GUI 宿主（如豆包桌面端经 launchd）以 STDIO 拉起，其 PATH
+    往往只有 /usr/bin:/bin:/usr/sbin:/sbin，不含 npm 全局链接所在的
+    /usr/local/bin（Intel）或 /opt/homebrew/bin（Apple Silicon），此时
+    shutil.which("wx") 会落空、回退成裸 "wx" 又会在子进程调用时
+    FileNotFoundError，使全部 MCP 工具失效。故 which 失败时再回退探测常见绝对路径。
+    """
+    found = shutil.which("wx")
+    if found:
+        return found
+    for candidate in ("/usr/local/bin/wx", "/opt/homebrew/bin/wx"):
+        if os.path.exists(candidate):
+            return candidate
+    return "wx"
+
+
+WX_CLI_BIN = _resolve_wx_bin()
 POLL_INTERVAL = 5  # 轮询间隔（秒）
 STATE_FILE = Path.home() / ".wx-cli/mcp_server_state.json"
 CONFIG_FILE = Path.home() / ".wx-cli/mcp_server_config.json"
