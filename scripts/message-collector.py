@@ -927,8 +927,124 @@ def export_image(msg, output_dir):
         return {'status': 'fail', 'reason': str(e)[:120]}
 
 
+def ocr_image(image_path):
+    """用 macOS Vision 框架做 OCR（复用技能内 ocr_wechat_screenshot.sh）。返回识别文字，无文字返回空串。"""
+    ocr_script = SKILL_DIR / "scripts" / "wechat-ui" / "ocr_wechat_screenshot.sh"
+    if not ocr_script.exists():
+        return ""
+    try:
+        r = subprocess.run(['bash', str(ocr_script), str(image_path)],
+            capture_output=True, text=True, timeout=15)
+        return r.stdout.strip()
+    except Exception:
+        return ""
+
+
+def extract_video_audio(video_path, wav_path):
+    """从视频提取音轨为 24kHz mono WAV。成功返回 True。"""
+    try:
+        r = subprocess.run(
+            ['ffmpeg', '-y', '-i', str(video_path), '-vn',
+             '-acodec', 'pcm_s16le', '-ar', '24000', '-ac', '1', str(wav_path)],
+            capture_output=True, timeout=30)
+        return Path(wav_path).exists() and Path(wav_path).stat().st_size > 1000
+    except Exception:
+        return False
+
+
+def transcribe_wav_file(wav_path):
+    """用 FunASR 转写 WAV 文件（复用 voice-transcribe.py 的常驻 worker）。"""
+    try:
+        import importlib.util as _ilu
+        vt_path = SKILL_DIR / "scripts" / "voice-transcribe.py"
+        spec = _ilu.spec_from_file_location("voice_transcribe", str(vt_path))
+        vt = _ilu.module_from_spec(spec)
+        spec.loader.exec_module(vt)
+        return vt.transcribe_wav(str(wav_path))
+    except Exception:
+        return ""
+
+
+def extract_best_video_frame(video_path, output_dir, local_id):
+    """从视频抽 5 帧，OCR 选文字最多的一帧作为代表帧。
+    返回 (frame_path, ocr_text)；所有帧都无文字时返回 (第一帧路径, "")。"""
+    info = get_video_info(video_path)
+    duration = info.get('duration_sec', 0)
+    if duration <= 0:
+        return None, ""
+
+    out_dir = Path(output_dir)
+    candidates = []
+    # 均匀抽 5 帧：10%, 30%, 50%, 70%, 90%
+    for i, pct in enumerate([0.1, 0.3, 0.5, 0.7, 0.9]):
+        ss = max(0.5, min(duration * pct, max(0, duration - 0.5)))
+        frame_path = out_dir / f"video_{local_id}_candidate_{i}.jpg"
+        if extract_video_frame(video_path, frame_path):
+            text = ocr_image(frame_path)
+            candidates.append((frame_path, len(text), text))
+
+    if not candidates:
+        return None, ""
+
+    # 选 OCR 文字最多的一帧
+    candidates.sort(key=lambda x: -x[1])
+    best_path, best_len, best_text = candidates[0]
+
+    # 重命名为最终帧，删除其他候选帧
+    final_path = out_dir / f"video_{local_id}_frame.jpg"
+    best_path.rename(final_path)
+    for p, _, _ in candidates[1:]:
+        p.unlink(missing_ok=True)
+    # 如果第一名就是 best_path（已重命名），跳过
+    for p, _, _ in candidates:
+        if p.exists() and p != final_path:
+            p.unlink(missing_ok=True)
+
+    return final_path, best_text
+
+
+def get_video_info(video_path):
+    """用 ffprobe 获取视频元信息（时长/分辨率/编码），失败返回空 dict"""
+    try:
+        r = subprocess.run(
+            ['ffprobe', '-v', 'error', '-show_entries',
+             'format=duration,size:stream=width,height,codec_name',
+             '-of', 'json', str(video_path)],
+            capture_output=True, text=True, timeout=10)
+        info = json.loads(r.stdout)
+        fmt = info.get('format', {})
+        # 视频流有 width/height，音频流没有；直接找有 width 的流
+        streams = [s for s in info.get('streams', []) if s.get('width')]
+        v = streams[0] if streams else {}
+        return {
+            'duration_sec': float(fmt.get('duration', 0)),
+            'size_bytes': int(fmt.get('size', 0)),
+            'width': v.get('width'),
+            'height': v.get('height'),
+            'codec': v.get('codec_name'),
+        }
+    except Exception:
+        return {}
+
+
+def extract_video_frame(video_path, output_path):
+    """从视频抽 1 帧代表性图片（取 10% 处，跳过开头黑屏）。成功返回 True。"""
+    try:
+        info = get_video_info(video_path)
+        duration = info.get('duration_sec', 0)
+        # 取 10% 处，最短 0.5 秒，最长不超过时长-0.5 秒
+        ss = max(0.5, min(duration * 0.1, max(0, duration - 0.5))) if duration > 0 else 1
+        r = subprocess.run(
+            ['ffmpeg', '-y', '-ss', f'{ss:.2f}', '-i', str(video_path),
+             '-vframes', '1', '-q:v', '2', str(output_path)],
+            capture_output=True, timeout=15)
+        return Path(output_path).exists()
+    except Exception:
+        return False
+
+
 def export_video(msg, output_dir):
-    """视频导出：查 resource md5 → 从 msg/video/ 复制 .mp4；未下载时兜底导出缩略图"""
+    """视频导出：查 resource md5 → 复制 .mp4；自动抽关键帧 + 生成文字描述"""
     chat_wxid = get_chat_wxid_from_table(msg['table_name'])
     file_md5 = get_resource_md5(chat_wxid, msg['local_id'], msg['create_time'], 43)
     if not file_md5:
@@ -944,8 +1060,60 @@ def export_video(msg, output_dir):
             if src.exists():
                 out_path = out_dir / f"video_{msg['local_id']}{suffix}"
                 shutil.copy2(src, out_path)
+                # 智能选帧：抽5帧 → OCR 选文字最多的一帧
+                frame_path, ocr_text = extract_best_video_frame(out_path, out_dir, msg['local_id'])
+                info = get_video_info(out_path)
+                dur = info.get('duration_sec', 0)
+                dur_str = f"{int(dur//60)}分{int(dur%60)}秒" if dur > 60 else f"{dur:.1f}秒"
+                res = f"{info.get('width','?')}x{info.get('height','?')}"
+                size_mb = out_path.stat().st_size / 1024 / 1024
+                time_str = datetime.fromtimestamp(msg['create_time']).strftime('%Y-%m-%d %H:%M:%S')
+
+                # 文字描述：优先 OCR，无文字则音轨转写兜底
+                content_desc = ""
+                desc_source = ""
+                if ocr_text:
+                    content_desc = ocr_text[:500]
+                    desc_source = "OCR 帧上文字"
+                else:
+                    # 提取音轨 → FunASR 转写
+                    wav_path = out_dir / f"video_{msg['local_id']}_audio.wav"
+                    if extract_video_audio(out_path, wav_path):
+                        transcript = transcribe_wav_file(wav_path)
+                        wav_path.unlink(missing_ok=True)
+                        if transcript and not transcript.startswith("[识别失败"):
+                            content_desc = transcript[:500]
+                            desc_source = "音轨语音转写"
+                        else:
+                            desc_source = "无文字且音轨转写失败"
+                    else:
+                        desc_source = "无文字且无音轨"
+
+                # 生成文字描述文件
+                info_path = out_dir / f"video_{msg['local_id']}_info.txt"
+                desc = f"""视频内容理解
+━━━━━━━━━━━━━━━━
+文件: {out_path.name}
+时长: {dur_str}
+分辨率: {res}
+大小: {size_mb:.1f}MB
+编码: {info.get('codec','?')}
+时间: {time_str}
+关键帧: {frame_path.name if frame_path else '抽取失败'}
+内容来源: {desc_source}
+━━━━━━━━━━━━━━━━
+{content_desc if content_desc else '(视频无文字内容且无语音，关键帧图片可直接查看画面)'}"""
+                info_path.write_text(desc, encoding='utf-8')
+
+                note = '原画' if suffix == '_raw.mp4' else '压缩版'
+                if frame_path:
+                    note += f' + 关键帧({res})'
+                if content_desc:
+                    note += f' + {desc_source}'
                 return {'status': 'ok', 'path': str(out_path), 'size': out_path.stat().st_size,
-                        'note': '原画' if suffix == '_raw.mp4' else '压缩版'}
+                        'note': note, 'frame': str(frame_path) if frame_path else None,
+                        'info': str(info_path), 'duration': dur, 'resolution': res,
+                        'content': content_desc, 'content_source': desc_source}
     # 2. 兜底：导出缩略图
     for ym in _month_candidates(msg['create_time']):
         thumb = video_dir / ym / f"{file_md5}_thumb.jpg"
