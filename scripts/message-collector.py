@@ -10,6 +10,8 @@
   python3 message-collector.py list-messages --since "2026-09-10" --type 1  # 按时间和类型过滤
   python3 message-collector.py parse --limit 20        # 解析最近消息（类型识别+内容解析）
   python3 message-collector.py parse --json --limit 5  # JSON 格式输出
+  python3 message-collector.py export --output ./out    # 导出媒体（图片解密/视频/语音/文件）
+  python3 message-collector.py export --type 3 --limit 5  # 只导出图片
   python3 message-collector.py monitor --interval 30   # 实时监控新消息
   python3 message-collector.py stats                    # 消息统计
 """
@@ -111,6 +113,8 @@ DB_PATHS = {}
 MSG_DB_KEYS = {}
 MEDIA_DB_KEY = None
 CONTACT_DB_KEY = None
+RESOURCE_DB_KEY = None
+WXCHAT_BASE = None  # xwechat_files/<wxid> 目录，用于找 msg/video、msg/file
 
 
 # ============================================================
@@ -119,7 +123,7 @@ CONTACT_DB_KEY = None
 
 def load_keys():
     """加载数据库密钥和路径"""
-    global DB_PATHS, MSG_DB_KEYS, MEDIA_DB_KEY, CONTACT_DB_KEY
+    global DB_PATHS, MSG_DB_KEYS, MEDIA_DB_KEY, CONTACT_DB_KEY, RESOURCE_DB_KEY, WXCHAT_BASE
 
     if not WX_CLI_CONFIG.exists():
         print("❌ wx-cli 配置不存在，请先运行 wx init", file=sys.stderr)
@@ -132,6 +136,10 @@ def load_keys():
         print(f"❌ 数据目录不存在: {db_dir}", file=sys.stderr)
         sys.exit(1)
 
+    # xwechat_files/<wxid> = db_dir 的父目录的父目录
+    # db_dir = .../xwechat_files/<wxid>/db_storage
+    WXCHAT_BASE = db_dir.parent.parent
+
     DB_PATHS = {
         "message_0": db_dir / "message" / "message_0.db",
         "message_1": db_dir / "message" / "message_1.db",
@@ -139,6 +147,7 @@ def load_keys():
         "media": db_dir / "message" / "media_0.db",
         "contact": db_dir / "contact" / "contact.db",
         "session": db_dir / "session" / "session.db",
+        "message_resource": db_dir / "message" / "message_resource.db",
     }
 
     # 加载密钥（all_keys.json 是 dict，key 是数据库路径）
@@ -156,6 +165,8 @@ def load_keys():
                 MEDIA_DB_KEY = enc_key
             elif "contact" in db_path_key and "fts" not in db_path_key:
                 CONTACT_DB_KEY = enc_key
+            elif "message_resource" in db_path_key:
+                RESOURCE_DB_KEY = enc_key
 
 
 def sqlcipher_query(db_path, db_key, query, params=None):
@@ -790,6 +801,211 @@ def parse_message(msg):
 
 
 # ============================================================
+# 媒体导出（图片解密 / 视频复制 / 语音提取 / 文件复制）
+# ============================================================
+
+def get_chat_wxid_from_table(table_name):
+    """从表名 Msg_<md5(wxid)> 反查 chat wxid（遍历 message_resource.db ChatName2Id）"""
+    if not RESOURCE_DB_KEY:
+        return None
+    target_md5 = table_name.replace("Msg_", "")
+    rows = sqlcipher_query(DB_PATHS["message_resource"], RESOURCE_DB_KEY,
+        "SELECT user_name FROM ChatName2Id;")
+    for r in rows:
+        wxid = r.strip()
+        if wxid and hashlib.md5(wxid.encode()).hexdigest() == target_md5:
+            return wxid
+    return None
+
+
+def extract_md5_from_packed_hex(hex_blob):
+    """从 MessageResourceInfo.packed_info (protobuf hex) 提取 32 字节文件 md5。
+    复刻 wx-cli resolver：主路径搜 marker 12 22 0a 20，fallback 扫连续 32 字节 hex。"""
+    if not hex_blob:
+        return None
+    try:
+        blob = bytes.fromhex(hex_blob)
+    except ValueError:
+        return None
+    # 主路径：marker
+    marker = bytes([0x12, 0x22, 0x0A, 0x20])
+    pos = blob.find(marker)
+    if pos >= 0:
+        start = pos + 4
+        if start + 32 <= len(blob):
+            s = blob[start:start+32].decode('ascii', errors='ignore')
+            if all(c in '0123456789abcdefABCDEF' for c in s):
+                return s.lower()
+    # fallback：连续 32 字节 hex
+    for start in range(max(0, len(blob) - 32 + 1)):
+        chunk = blob[start:start+32]
+        try:
+            s = chunk.decode('ascii')
+            if all(c in '0123456789abcdefABCDEF' for c in s):
+                return s.lower()
+        except (UnicodeDecodeError, ValueError):
+            continue
+    return None
+
+
+def get_resource_md5(chat_wxid, local_id, create_time, msg_type_lo32):
+    """查 message_resource.db 拿附件文件 md5（图片/视频/文件/语音通用）"""
+    if not RESOURCE_DB_KEY or not chat_wxid:
+        return None
+    # ChatName2Id: user_name -> rowid (chat_id)
+    rows = sqlcipher_query(DB_PATHS["message_resource"], RESOURCE_DB_KEY,
+        f"SELECT rowid FROM ChatName2Id WHERE user_name = '{chat_wxid}';")
+    if not rows:
+        return None
+    chat_id = rows[0].strip()
+    # 精确匹配 create_time，fallback 同 local_id 最新
+    query = f"""SELECT hex(packed_info) FROM MessageResourceInfo
+        WHERE chat_id = {chat_id} AND message_local_id = {local_id}
+          AND (message_local_type = {msg_type_lo32} OR message_local_type % 4294967296 = {msg_type_lo32})
+          AND message_create_time = {create_time}
+        ORDER BY rowid DESC LIMIT 1;"""
+    rows = sqlcipher_query(DB_PATHS["message_resource"], RESOURCE_DB_KEY, query)
+    if not rows:
+        query2 = f"""SELECT hex(packed_info) FROM MessageResourceInfo
+            WHERE chat_id = {chat_id} AND message_local_id = {local_id}
+              AND (message_local_type = {msg_type_lo32} OR message_local_type % 4294967296 = {msg_type_lo32})
+            ORDER BY message_create_time DESC LIMIT 1;"""
+        rows = sqlcipher_query(DB_PATHS["message_resource"], RESOURCE_DB_KEY, query2)
+    if rows:
+        return extract_md5_from_packed_hex(rows[0].strip())
+    return None
+
+
+def _make_attachment_id(chat_wxid, local_id, create_time, kind):
+    """构造 wx-cli attachment_id（base64url(json)），kind: image/video/file/voice"""
+    import base64 as b64
+    payload = json.dumps({
+        "v": 1, "chat": chat_wxid, "local_id": local_id,
+        "create_time": create_time, "kind": kind
+    }, separators=(',', ':'))
+    return b64.urlsafe_b64encode(payload.encode()).decode().rstrip('=')
+
+
+def export_image(msg, output_dir):
+    """图片导出：构造 attachment_id → 调 wx extract 解密"""
+    chat_wxid = get_chat_wxid_from_table(msg['table_name'])
+    if not chat_wxid:
+        return {'status': 'skip', 'reason': '无法反查 chat wxid'}
+    att_id = _make_attachment_id(chat_wxid, msg['local_id'], msg['create_time'], 'image')
+    out_path = Path(output_dir) / f"img_{msg['local_id']}.jpg"
+    try:
+        r = subprocess.run(['wx', 'extract', att_id, '--output', str(out_path), '--overwrite'],
+            capture_output=True, timeout=30)
+        if r.returncode == 0 and out_path.exists():
+            return {'status': 'ok', 'path': str(out_path), 'size': out_path.stat().st_size}
+        err = r.stderr.decode(errors='replace').strip()[:120]
+        return {'status': 'fail', 'reason': err or 'wx extract 返回非零'}
+    except Exception as e:
+        return {'status': 'fail', 'reason': str(e)[:120]}
+
+
+def export_video(msg, output_dir):
+    """视频导出：查 resource md5 → 从 msg/video/<月>/<md5>.mp4 复制（已解密明文）"""
+    chat_wxid = get_chat_wxid_from_table(msg['table_name'])
+    file_md5 = get_resource_md5(chat_wxid, msg['local_id'], msg['create_time'], 43)
+    if not file_md5:
+        return {'status': 'skip', 'reason': 'message_resource.db 无此视频记录'}
+    if not WXCHAT_BASE:
+        return {'status': 'fail', 'reason': 'WXCHAT_BASE 未设置'}
+    video_dir = WXCHAT_BASE / 'msg' / 'video'
+    # 按消息时间所在月份 + 前后各一个月搜索
+    dt = datetime.fromtimestamp(msg['create_time'])
+    candidates = []
+    for delta in [-1, 0, 1]:
+        m = dt.month + delta
+        y = dt.year
+        while m > 12: m -= 12; y += 1
+        while m < 1: m += 12; y -= 1
+        candidates.append(f"{y:04d}-{m:02d}")
+    for ym in candidates:
+        for suffix in ['.mp4', '_raw.mp4']:
+            src = video_dir / ym / f"{file_md5}{suffix}"
+            if src.exists():
+                out_path = Path(output_dir) / f"video_{msg['local_id']}{suffix}"
+                import shutil
+                shutil.copy2(src, out_path)
+                return {'status': 'ok', 'path': str(out_path), 'size': out_path.stat().st_size,
+                        'note': '原画' if suffix == '_raw.mp4' else '压缩版'}
+    return {'status': 'skip', 'reason': f'视频未下载到本地（md5={file_md5[:16]}…），仅缩略图可用'}
+
+
+def export_voice(msg, output_dir):
+    """语音导出：从 media_0.db VoiceInfo 拿 SILK V3 BLOB → 写 .sil 文件"""
+    if not MEDIA_DB_KEY:
+        return {'status': 'skip', 'reason': '无 media_0.db 密钥'}
+    # 用 hex() 取 BLOB
+    rows = sqlcipher_query(DB_PATHS["media"], MEDIA_DB_KEY,
+        f"SELECT hex(voice_data), length(voice_data) FROM VoiceInfo WHERE local_id = {msg['local_id']};")
+    if not rows:
+        return {'status': 'skip', 'reason': 'VoiceInfo 无此语音'}
+    parts = rows[0].split('|', 1)
+    if len(parts) < 2 or not parts[0].strip():
+        return {'status': 'fail', 'reason': 'voice_data 为空'}
+    try:
+        silk_bytes = bytes.fromhex(parts[0].strip())
+        out_path = Path(output_dir) / f"voice_{msg['local_id']}.sil"
+        out_path.write_bytes(silk_bytes)
+        return {'status': 'ok', 'path': str(out_path), 'size': len(silk_bytes),
+                'note': 'SILK V3 格式，可用 silk-v3-decoder 转 WAV，voice-transcribe.py 可转文字'}
+    except Exception as e:
+        return {'status': 'fail', 'reason': str(e)[:120]}
+
+
+def export_file(msg, output_dir):
+    """文件导出：从 message_content 解析文件名 → 从 msg/file/<月>/ 复制（明文）"""
+    raw, _ = fetch_raw_content(msg)
+    if not raw:
+        return {'status': 'skip', 'reason': '无法获取消息内容'}
+    # 文件名在 <title> 或 <filename> 标签
+    filename = _xml_get(raw, 'title') or _xml_get(raw, 'filename') or _xml_get(raw, 'name')
+    if not filename:
+        return {'status': 'skip', 'reason': '无法解析文件名'}
+    if not WXCHAT_BASE:
+        return {'status': 'fail', 'reason': 'WXCHAT_BASE 未设置'}
+    file_dir = WXCHAT_BASE / 'msg' / 'file'
+    dt = datetime.fromtimestamp(msg['create_time'])
+    candidates = []
+    for delta in [-1, 0, 1]:
+        m = dt.month + delta; y = dt.year
+        while m > 12: m -= 12; y += 1
+        while m < 1: m += 12; y -= 1
+        candidates.append(f"{y:04d}-{m:02d}")
+    import shutil
+    for ym in candidates:
+        src = file_dir / ym / filename
+        if src.exists():
+            safe_name = f"file_{msg['local_id']}_{filename}"
+            out_path = Path(output_dir) / safe_name
+            shutil.copy2(src, out_path)
+            return {'status': 'ok', 'path': str(out_path), 'size': out_path.stat().st_size}
+    return {'status': 'skip', 'reason': f'文件未找到（{filename}），可能未下载或已清理'}
+
+
+def export_message(msg, output_dir):
+    """统一导出分发：按消息类型选择导出方式"""
+    base = get_base_type(msg['local_type'])
+    if base == 3:
+        return export_image(msg, output_dir)
+    elif base == 43:
+        return export_video(msg, output_dir)
+    elif base == 34:
+        return export_voice(msg, output_dir)
+    elif base == 49:
+        # appmsg 卡片类：可能是文件（appmsg type 6/2000）
+        appmsg_type = msg['local_type'] >> 32
+        if appmsg_type in (6, 2000):
+            return export_file(msg, output_dir)
+        return {'status': 'skip', 'reason': f'appmsg 类型 {appmsg_type} 不支持导出'}
+    else:
+        return {'status': 'skip', 'reason': f'类型 {msg.get("type_name", base)} 无需导出'}
+
+
+# ============================================================
 # 命令实现
 # ============================================================
 
@@ -1016,6 +1232,53 @@ def cmd_parse(since=None, limit=20, msg_type=None, output_json=False):
     print()
 
 
+def cmd_export(output_dir="./wechat_exports", since=None, limit=20, msg_type=None):
+    """统一导出：收集最近消息，对可导出类型执行导出，输出清单"""
+    load_keys()
+
+    since_time = 0
+    if since:
+        try:
+            since_time = int(datetime.strptime(since, "%Y-%m-%d").timestamp())
+        except ValueError:
+            print(f"❌ 日期格式错误: {since}，应为 YYYY-MM-DD", file=sys.stderr)
+            return
+
+    out_path = Path(output_dir)
+    out_path.mkdir(parents=True, exist_ok=True)
+
+    messages = collect_all_messages(since_time=since_time, type_filter=msg_type, limit=limit)
+
+    print("=" * 70)
+    print(f"媒体导出（共扫描 {len(messages)} 条消息）")
+    print(f"输出目录: {out_path.resolve()}")
+    print("=" * 70)
+
+    stats = {'ok': 0, 'skip': 0, 'fail': 0}
+    type_stats = {}
+
+    for i, msg in enumerate(messages, 1):
+        type_name = msg.get('type_name', '?')
+        result = export_message(msg, str(out_path))
+        status = result.get('status', 'skip')
+        stats[status] = stats.get(status, 0) + 1
+        type_stats[type_name] = type_stats.get(type_name, 0) + 1
+
+        if status == 'ok':
+            size_kb = result.get('size', 0) / 1024
+            note = f" ({result['note']})" if 'note' in result else ""
+            print(f"  [{i:3d}] ✅ {type_name:<8} {Path(result['path']).name} ({size_kb:.1f}KB){note}")
+        elif status == 'fail':
+            print(f"  [{i:3d}] ❌ {type_name:<8} id={msg['local_id']}: {result.get('reason', '?')}")
+        # skip 不打印，太吵
+
+    print("-" * 70)
+    print(f"统计: 成功 {stats['ok']} / 跳过 {stats['skip']} / 失败 {stats['fail']}")
+    print(f"扫描类型分布: {type_stats}")
+    print(f"输出目录: {out_path.resolve()}")
+    print()
+
+
 def main():
     parser = argparse.ArgumentParser(description="微信统一消息采集模块")
     subparsers = parser.add_subparsers(dest="command", help="命令")
@@ -1044,6 +1307,13 @@ def main():
     parse_parser.add_argument("--type", type=int, help="过滤消息类型（local_type）")
     parse_parser.add_argument("--json", action="store_true", help="以 JSON 格式输出")
 
+    # export
+    exp_parser = subparsers.add_parser("export", help="导出媒体文件（图片解密/视频/语音/文件）")
+    exp_parser.add_argument("--output", type=str, default="./wechat_exports", help="输出目录")
+    exp_parser.add_argument("--limit", type=int, default=20, help="处理最近 N 条消息")
+    exp_parser.add_argument("--since", type=str, help="起始日期（YYYY-MM-DD）")
+    exp_parser.add_argument("--type", type=int, help="只导出指定类型（local_type，如 3=图片 43=视频 34=语音）")
+
     args = parser.parse_args()
 
     if not args.command:
@@ -1069,6 +1339,13 @@ def main():
             limit=args.limit,
             msg_type=args.type,
             output_json=args.json,
+        )
+    elif args.command == "export":
+        cmd_export(
+            output_dir=args.output,
+            since=args.since,
+            limit=args.limit,
+            msg_type=args.type,
         )
 
 
