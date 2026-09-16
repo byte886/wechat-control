@@ -3,7 +3,7 @@
 > 基于 2026-09-10 spec 规范和共识小结制定。按优先级推动，每完成一项更新状态。
 > 关联文档：wechat-ai-agent-spec.md、SKILL.md
 >
-> **最后状态同步：2026-09-16**（对照脚本与实测回写：MCP 连接器、合并记录直读、语音免播放、M-5/M-6 外推未闭环、M-10 邮箱待办、W-6 撤回不做、S-1 飞书待重做、多账号 v2 已完成）
+> **最后状态同步：2026-09-17**（新增 M-11「合并聊天记录识别与拆分」监控子功能待办，MCP-3 归为其已验证子集；此前回写：MCP 连接器、语音免播放、M-5/M-6 外推未闭环、M-10 邮箱待办、W-6 撤回不做、S-1 飞书待重做、多账号 v2 已完成）
 
 ---
 
@@ -106,6 +106,7 @@
 | M-8 | **配置管理** | 添加/移除监控群、关键词、特定人 | `wx-monitor.py config add-group/remove-group/add-keyword/...` | ✅ 完成 |
 | M-9 | **性能保护** | 消息量过大时提醒 | 单次轮询 >500 条提醒；建议监控群 ≤20 个；已推送 ID 最多保留 1000 条 | ✅ 完成 |
 | M-10 | **QQ 邮箱实时外推（待办）** | 重要消息实时发到手机邮箱 | smtp.qq.com 465(SSL)/587(STARTTLS) 国内直连；脚本 `scripts/qq_mail_notify.py` 未落盘、`~/.wx-cli/email_notify.json` 未建；**阻塞：用户未提供 16 位 SMTP 授权码（非登录密码）**；待对齐通知策略（即时/合并摘要、只发重要、夜间静默） | ⏳ 待办（阻塞于授权码） |
+| M-11 | **合并聊天记录识别与拆分（监控子功能，待办）** | 识别消息流中的「合并聊天记录/收藏卡片」（`local_type=81604378673`，appmsg recorditem），把其中**每条子消息拆分还原**（发送人/时间/类型/文本/链接/媒体）；实时监控收到时自动展开、纳入重要性判定与总结，历史查询可手动展开任意一/多条 | 通用：任意会话、任意一/多条，不限最新一条或文件传输助手、不限豆包链接。直读库+zstd 解压+解析路径已验证（链接提取见 MCP-3、advanced-usage §5）；**通用拆分脚本未固化**，需健壮解析整条 recorditem（CDATA desc 仅前 5 条+"..."截断），多类型子消息与图片/语音/视频媒体解密待处理。详见 PRD §2.3.7 | ⏳ 待办（方法已验证、工程化未做） |
 
 ### 飞书同步（待实现）
 
@@ -131,7 +132,7 @@
 |---|------|------|------|
 | MCP-1 | **STDIO MCP 服务** | `mcp-server/server.py`（fastmcp，服务名 `wechat-monitor`），5 个只读/状态工具：get_new_messages / get_monitor_status / mark_messages_as_read / update_config / get_message_history；豆包桌面端「连接器」tab 以自定义 STDIO 连接器接入（命令、参数均填绝对路径） | ✅ 完成 |
 | MCP-2 | **GUI 精简 PATH 修复** | launchd 拉起连接器时 PATH 仅 `/usr/bin:/bin:/usr/sbin:/sbin`，`shutil.which("wx")` 返回 None；改 `_resolve_wx_bin()` 回退探测 `/usr/local/bin/wx`（Intel）、`/opt/homebrew/bin/wx`（Apple Silicon）。提交 67d7360 | ✅ 完成 |
-| MCP-3 | **合并聊天记录全量直读** | CLI 对合并记录只显前 10 条（wx-cli `query.rs` 硬 `take(10)`）；改为直读 `message_0.db` 的 `Msg_<md5(username)>`，zstd 解压 appmsg recorditem，抓全量链接/条目。已验证文件传输助手两份记录合并去重 124 条。方法见 references/advanced-usage.md；**通用提取脚本待固化（待办）** | ✅ 方法验证 / ⏳ 脚本待固化 |
+| MCP-3 | **合并记录全量直读（M-11 的已验证子集）** | CLI 对合并记录只显前 10 条（wx-cli `query.rs` 硬 `take(10)`）；已验证直读 `message_0.db` 的 `Msg_<md5(username)>`、zstd 解压 appmsg recorditem、抓全量链接（文件传输助手两份合并去重 124 条）。方法见 references/advanced-usage.md §5。通用的"识别 + 每条子消息内容拆分"作为监控子功能见 **M-11** | ✅ 链接提取已验证 |
 
 > 重启 MCP 连接器唯一可靠方式：豆包连接器开关关→开（直接 kill STDIO 托管进程无效）。MCP 主动 notification 冒泡客户端不唤起，实时外推走 M-10 邮箱。
 
