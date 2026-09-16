@@ -1257,7 +1257,35 @@ def cmd_monitor(interval=30):
 # 主入口
 # ============================================================
 
-def cmd_parse(since=None, limit=20, msg_type=None, output_json=False):
+def transcribe_voice(local_id):
+    """语音转文字：复用 voice-transcribe.py 的 SILK→WAV→FunASR 全链路。
+    首次调用需加载 FunASR 模型（10-30秒），后续复用常驻 worker。"""
+    try:
+        import importlib.util as _ilu
+        import tempfile as _tf
+        vt_path = Path(__file__).parent / "voice-transcribe.py"
+        spec = _ilu.spec_from_file_location("voice_transcribe", str(vt_path))
+        vt = _ilu.module_from_spec(spec)
+        spec.loader.exec_module(vt)
+        vt.load_keys()
+
+        with _tf.TemporaryDirectory() as tmpdir:
+            silk_path = Path(tmpdir) / f"voice_{local_id}.silk"
+            wav_path = Path(tmpdir) / f"voice_{local_id}.wav"
+            # 提取 SILK BLOB
+            if not vt.extract_voice_blob(vt.get_media_db_path(), local_id, silk_path):
+                return "[转写失败: 无法提取语音数据]"
+            # SILK → WAV
+            if not vt.silk_to_wav(silk_path, wav_path):
+                return "[转写失败: SILK→WAV 转码失败]"
+            # FunASR 转文字
+            text = vt.transcribe_wav(str(wav_path))
+            return text if text else "[转写失败: 无识别结果]"
+    except Exception as e:
+        return f"[转写失败: {str(e)[:80]}]"
+
+
+def cmd_parse(since=None, limit=20, msg_type=None, output_json=False, transcribe=False):
     """解析最近消息：识别类型 + 解析内容"""
     load_keys()
 
@@ -1292,6 +1320,12 @@ def cmd_parse(since=None, limit=20, msg_type=None, output_json=False):
             if len(content) > 300:
                 content = content[:300] + "..."
             print(f"  内容: {content}")
+
+        # 语音消息转文字（--transcribe）
+        if transcribe and get_base_type(msg['local_type']) == 34:
+            print(f"  ⏳ 正在转写语音 (id={parsed['local_id']})...")
+            text = transcribe_voice(parsed['local_id'])
+            print(f"  🎙️  转写: {text}")
 
         p = parsed['parsed']
         if p:
@@ -1423,6 +1457,7 @@ def main():
     parse_parser.add_argument("--since", type=str, help="起始日期（YYYY-MM-DD）")
     parse_parser.add_argument("--type", type=int, help="过滤消息类型（local_type）")
     parse_parser.add_argument("--json", action="store_true", help="以 JSON 格式输出")
+    parse_parser.add_argument("--transcribe", action="store_true", help="语音消息自动转文字（首次需加载 FunASR 模型，较慢）")
 
     # export
     exp_parser = subparsers.add_parser("export", help="导出媒体文件（图片解密/视频/语音/文件）")
@@ -1457,6 +1492,7 @@ def main():
             limit=args.limit,
             msg_type=args.type,
             output_json=args.json,
+            transcribe=args.transcribe,
         )
     elif args.command == "export":
         cmd_export(
