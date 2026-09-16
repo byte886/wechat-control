@@ -16,6 +16,7 @@
 
 import argparse
 import hashlib
+import html
 import json
 import os
 import subprocess
@@ -376,6 +377,21 @@ def _xml_get_all(xml_str, tag):
     return _re.findall(rf'<{tag}[^>]*>(.*?)</{tag}>', xml_str, _re.DOTALL)
 
 
+def _xml_attr(xml_str, tag, attr):
+    """从 XML 字符串中提取第一个 <tag ... attr="value" ...> 的属性值"""
+    if not xml_str:
+        return None
+    m = _re.search(rf'<{tag}[^>]*\s{attr}="([^"]*)"', xml_str)
+    return m.group(1) if m else None
+
+
+def _unescape(text):
+    """解码 HTML 实体（合并记录中 &#x20; &#x0A; 等）"""
+    if not text:
+        return text
+    return html.unescape(text)
+
+
 def zstd_decompress_hex(hex_data):
     """用 zstd CLI 解压 hex 编码的 zstd BLOB，返回解压后的文本"""
     if not hex_data:
@@ -447,13 +463,22 @@ def parse_text(raw):
 
 
 def parse_image(raw):
+    """图片消息：解析 <img> 标签属性，提取 aeskey/尺寸/大小/MD5。
+    图片实际数据加密存储在 CDN，需用 aeskey 解密导出（wx attachments/extract）。"""
     if not raw:
         return {}
-    return {
-        'img_path': _xml_get(raw, 'imgpath') or _xml_get(raw, 'aespath'),
-        'md5': _xml_get(raw, 'md5'),
-        'note': '可用 wx attachments + wx extract 解密导出',
+    result = {
+        'aeskey': _xml_attr(raw, 'img', 'aeskey'),
+        'md5': _xml_attr(raw, 'img', 'md5'),
+        'size_bytes': _xml_attr(raw, 'img', 'length'),
+        'hd_size_bytes': _xml_attr(raw, 'img', 'hdlength'),
+        'thumb_width': _xml_attr(raw, 'img', 'cdnthumbwidth'),
+        'thumb_height': _xml_attr(raw, 'img', 'cdnthumbheight'),
+        'thumb_size': _xml_attr(raw, 'img', 'cdnthumblength'),
+        'encryver': _xml_attr(raw, 'img', 'encryver'),
+        'note': '图片加密存储于CDN，可用 wx attachments + wx extract 解密导出',
     }
+    return {k: v for k, v in result.items() if v is not None and v != ''}
 
 
 def parse_voice(msg):
@@ -472,14 +497,22 @@ def parse_voice(msg):
 
 
 def parse_video(raw):
+    """视频消息：解析 <videomsg> 标签属性，提取 aeskey/时长/大小/尺寸。
+    视频实际数据加密存储于 CDN，wx-cli 不支持视频解密导出，仅元数据可读。"""
     if not raw:
         return {}
-    return {
-        'duration': _xml_get(raw, 'playlength') or _xml_get(raw, 'duration'),
-        'md5': _xml_get(raw, 'md5'),
-        'img_path': _xml_get(raw, 'imgpath'),
-        'note': 'wx-cli 不支持视频解密导出；仅元数据可读',
+    result = {
+        'aeskey': _xml_attr(raw, 'videomsg', 'aeskey'),
+        'duration_sec': _xml_attr(raw, 'videomsg', 'playlength'),
+        'size_bytes': _xml_attr(raw, 'videomsg', 'length'),
+        'thumb_width': _xml_attr(raw, 'videomsg', 'cdnthumbwidth'),
+        'thumb_height': _xml_attr(raw, 'videomsg', 'cdnthumbheight'),
+        'thumb_size': _xml_attr(raw, 'videomsg', 'cdnthumblength'),
+        'from_user': _xml_attr(raw, 'videomsg', 'fromusername'),
+        'md5': _xml_attr(raw, 'videomsg', 'md5'),
+        'note': '视频加密存储于CDN，wx-cli不支持解密导出；仅元数据可读',
     }
+    return {k: v for k, v in result.items() if v is not None and v != ''}
 
 
 def parse_location(raw):
@@ -561,31 +594,103 @@ def parse_transfer(raw):
     }
 
 
+# 合并聊天记录子消息 datatype 映射
+MERGED_DATATYPES = {
+    1: "文本",
+    2: "图片",
+    3: "语音",
+    4: "视频",
+    5: "链接",
+    6: "文件",
+    7: "表情",
+    8: "位置",
+    9: "名片",
+    10: "红包",
+    11: "小程序",
+    19: "合并聊天记录",
+}
+
+
+def _parse_merged_dataitem(attrs, content, depth=0, max_depth=5):
+    """解析合并记录中的单条 dataitem，支持递归嵌套合并记录"""
+    dt_match = _re.search(r'datatype="(\d+)"', attrs)
+    datatype = int(dt_match.group(1)) if dt_match else 0
+    type_name = MERGED_DATATYPES.get(datatype, f"未知({datatype})")
+
+    dataid_match = _re.search(r'dataid="([^"]+)"', attrs)
+    desc_raw = _xml_get(content, 'datadesc')
+    sub = {
+        'datatype': datatype,
+        'type': type_name,
+        'dataid': dataid_match.group(1) if dataid_match else None,
+        'sender': _unescape(_xml_get(content, 'sourcename')),
+        'time': _unescape(_xml_get(content, 'sourcetime')),
+        'src_create_time': _xml_get(content, 'srcMsgCreateTime'),
+        'desc': _unescape(desc_raw),
+    }
+
+    # 按类型深度解析
+    if datatype == 1:  # 文本
+        sub['text'] = _unescape(desc_raw)
+    elif datatype == 2:  # 图片
+        sub['thumb_width'] = _xml_get(content, 'thumbwidth')
+        sub['thumb_height'] = _xml_get(content, 'thumbheight')
+        sub['thumb_size'] = _xml_get(content, 'thumbsize')
+        sub['full_md5'] = _xml_get(content, 'fullmd5')
+        sub['data_size'] = _xml_get(content, 'datasize')
+        sub['aeskey'] = _xml_get(content, 'cdnthumbkey') or _xml_get(content, 'cdndatakey')
+    elif datatype == 4:  # 视频
+        sub['duration'] = _xml_get(content, 'playlength') or _xml_get(content, 'videolength')
+        sub['size'] = _xml_get(content, 'datasize') or _xml_get(content, 'length')
+        sub['aeskey'] = _xml_get(content, 'cdnvideokey') or _xml_get(content, 'cdndatakey')
+    elif datatype == 5:  # 链接
+        sub['url'] = _xml_get(content, 'url') or _xml_get(content, 'cdnurl')
+        sub['title'] = _xml_get(content, 'title')
+    elif datatype == 8:  # 位置
+        sub['label'] = _xml_get(content, 'label') or _xml_get(content, 'poiname')
+        sub['lat'] = _xml_get(content, 'x') or _xml_get(content, 'lat')
+        sub['lng'] = _xml_get(content, 'y') or _xml_get(content, 'lng')
+    elif datatype == 19 and depth < max_depth:  # 递归：嵌套合并聊天记录
+        nested = _parse_merged_datalist(content, depth + 1, max_depth)
+        if nested:
+            sub['sub_messages'] = nested
+            sub['sub_message_count'] = len(nested)
+    elif datatype == 19:
+        sub['note'] = f'嵌套合并记录，已达最大深度 {max_depth}'
+
+    # 通用递归：任何 dataitem 内含 <datalist> 都递归解析（兼容非标准嵌套）
+    if 'sub_messages' not in sub and '<datalist' in content and depth < max_depth:
+        nested = _parse_merged_datalist(content, depth + 1, max_depth)
+        if nested:
+            sub['sub_messages'] = nested
+            sub['sub_message_count'] = len(nested)
+            sub['note'] = '检测到嵌套子消息'
+
+    # 去掉 None 值
+    return {k: v for k, v in sub.items() if v is not None and v != ''}
+
+
+def _parse_merged_datalist(xml, depth=0, max_depth=5):
+    """解析合并记录中的 <datalist>，返回子消息列表（可递归）"""
+    items = _re.findall(r'<dataitem\s+([^>]*)>(.*?)</dataitem>', xml, _re.DOTALL)
+    return [_parse_merged_dataitem(attrs, content, depth, max_depth) for attrs, content in items]
+
+
 def parse_merged_record(raw):
-    """合并聊天记录解析：解压后解析 recorditem，拆出每条子消息"""
+    """合并聊天记录解析：zstd 解压后解析 recordinfo/datalist，
+    按 datatype 深度解析每条子消息，支持递归嵌套合并记录。"""
     if not raw:
         return {'note': '内容为空或解压失败', 'sub_messages': []}
 
-    sub_messages = []
-    # 提取所有 recorditem
-    items = _xml_get_all(raw, 'recorditem')
-    for item in items:
-        sub = {
-            'datatime': _xml_get(item, 'datatime'),
-            'sourcename': _xml_get(item, 'sourcename'),
-            'title': _xml_get(item, 'title'),
-            'desc': _xml_get(item, 'desc'),
-            'data_type': _xml_get(item, 'datatype'),
-        }
-        # 从 recorditem 中提取 URL（完整条目在整条 XML 中）
-        urls = _re.findall(r"https?://[^\s<>\"']+", item)
-        if urls:
-            sub['urls'] = urls
-        sub_messages.append(sub)
+    # 提取 recordinfo（可能在 CDATA 内）
+    title = _unescape(_xml_get(raw, 'title'))
+    desc = _unescape(_xml_get(raw, 'desc'))
 
-    # 也从整条 XML 提取所有 URL（合并记录里的链接可能不在 recorditem 内）
+    # 解析所有 dataitem（递归）
+    sub_messages = _parse_merged_datalist(raw, depth=0, max_depth=5)
+
+    # 从整条 XML 提取所有 URL（保序去重）
     all_urls = _re.findall(r"https?://[^\s<>\"']+", raw)
-    # 去重保序
     seen = set()
     unique_urls = []
     for u in all_urls:
@@ -593,11 +698,20 @@ def parse_merged_record(raw):
             seen.add(u)
             unique_urls.append(u)
 
+    # 统计子消息类型分布
+    type_counts = {}
+    for s in sub_messages:
+        t = s.get('type', '未知')
+        type_counts[t] = type_counts.get(t, 0) + 1
+
     return {
+        'title': title,
+        'desc': desc[:300] if desc else None,
         'sub_message_count': len(sub_messages),
+        'sub_message_types': type_counts,
         'sub_messages': sub_messages,
-        'all_urls': unique_urls[:50],  # 最多保留 50 条
-        'note': f'已拆分 {len(sub_messages)} 条子消息；desc 仅前 5 条摘要，完整内容见 sub_messages',
+        'all_urls': unique_urls[:50],
+        'note': f'已拆分 {len(sub_messages)} 条子消息，类型分布: {type_counts}',
     }
 
 
@@ -866,13 +980,20 @@ def cmd_parse(since=None, limit=20, msg_type=None, output_json=False):
                     continue
                 if k == 'sub_messages':
                     print(f"  子消息 ({len(v)} 条):")
-                    for j, sm in enumerate(v[:5], 1):
-                        sender = sm.get('sourcename', '?')
-                        title = (sm.get('title') or '')[:60]
-                        dt = sm.get('datatime', '')
-                        print(f"    {j}. [{dt}] {sender}: {title}")
-                    if len(v) > 5:
-                        print(f"    ... 还有 {len(v)-5} 条")
+                    for j, sm in enumerate(v[:8], 1):
+                        sm_type = sm.get('type', '?')
+                        sender = sm.get('sender', '?')
+                        sm_time = sm.get('time', '')
+                        # 文本显示内容，其他显示 desc
+                        if sm_type == '文本':
+                            detail = (sm.get('text') or sm.get('desc') or '')[:60]
+                        elif sm_type == '合并聊天记录':
+                            detail = f"[嵌套合并记录 {sm.get('sub_message_count', '?')} 条]"
+                        else:
+                            detail = (sm.get('desc') or '')[:60]
+                        print(f"    {j}. [{sm_type}] {sender} {sm_time}: {detail}")
+                    if len(v) > 8:
+                        print(f"    ... 还有 {len(v)-8} 条")
                 elif k == 'all_urls':
                     if v:
                         print(f"  链接 ({len(v)} 条):")
