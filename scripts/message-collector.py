@@ -21,6 +21,7 @@ import hashlib
 import html
 import json
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -936,7 +937,6 @@ def export_video(msg, output_dir):
         return {'status': 'fail', 'reason': 'WXCHAT_BASE 未设置'}
     video_dir = WXCHAT_BASE / 'msg' / 'video'
     out_dir = _ensure_subdir(output_dir, 'video')
-    import shutil
     # 1. 优先找完整视频（原画 > 压缩版）
     for ym in _month_candidates(msg['create_time']):
         for suffix in ['_raw.mp4', '.mp4']:
@@ -1011,7 +1011,6 @@ def export_file(msg, output_dir):
         return {'status': 'fail', 'reason': 'WXCHAT_BASE 未设置'}
     file_dir = WXCHAT_BASE / 'msg' / 'file'
     out_dir = _ensure_subdir(output_dir, 'file')
-    import shutil
     for ym in _month_candidates(msg['create_time']):
         src = file_dir / ym / filename
         if src.exists():
@@ -1056,7 +1055,6 @@ def export_merged_record(msg, output_dir, transcode=False):
                 found = p; break
             if found:
                 out_dir = _ensure_subdir(output_dir, 'video')
-                import shutil
                 out_path = out_dir / f"merged_video_{msg['local_id']}_{found.name}"
                 shutil.copy2(found, out_path)
                 results.append({'type': '视频', 'status': 'ok', 'path': str(out_path),
@@ -1073,7 +1071,6 @@ def export_merged_record(msg, output_dir, transcode=False):
                 found = p; break
             if found:
                 out_dir = _ensure_subdir(output_dir, 'file')
-                import shutil
                 out_path = out_dir / f"merged_file_{msg['local_id']}_{fname}"
                 shutil.copy2(found, out_path)
                 results.append({'type': '文件', 'status': 'ok', 'path': str(out_path),
