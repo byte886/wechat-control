@@ -76,7 +76,7 @@ def load_keys():
                     MEDIA_DB_KEY = key_info.get("enc_key", "") or key_info.get("key", "")
                 break
     if not MEDIA_DB_KEY:
-        print("⚠️  未找到 media_0.db 密钥，请先播放一条语音触发密钥提取，然后运行 wx init --force", file=sys.stderr)
+        print("⚠️  未找到 media_0.db 密钥：请保持微信运行后执行 wx init --force 提取（无需播放语音；新账号尚无语音消息时可跳过）", file=sys.stderr)
         sys.exit(1)
 
 
