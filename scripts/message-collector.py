@@ -928,13 +928,8 @@ def export_image(msg, output_dir):
         return {'status': 'fail', 'reason': str(e)[:120]}
 
 
-def ocr_image(image_path):
-    """用 macOS Vision 框架做 OCR（复用技能内 ocr_wechat_screenshot.sh）。
-    非 macOS 系统直接返回空串（OCR 为 macOS 专属，Windows/Linux 上走音轨转写兜底）。
-    返回识别文字，无文字返回空串。
-    """
-    if platform.system() != "Darwin":
-        return ""
+def _ocr_macos(image_path):
+    """macOS Vision 框架 OCR（复用技能内 ocr_wechat_screenshot.sh，osascript 调 Vision）。"""
     ocr_script = SKILL_DIR / "scripts" / "wechat-ui" / "ocr_wechat_screenshot.sh"
     if not ocr_script.exists():
         return ""
@@ -943,6 +938,52 @@ def ocr_image(image_path):
             capture_output=True, text=True, timeout=15)
         return r.stdout.strip()
     except Exception:
+        return ""
+
+
+def _ocr_windows(image_path):
+    """Windows.Media.Ocr 系统原生 OCR（Windows 10 1809+，通过 winsdk 调用）。
+    依赖: pip install winsdk
+    未安装或调用失败时返回空串，自动降级为音轨转写兜底。
+    """
+    try:
+        import asyncio
+        import winsdk.windows.media.ocr as ocr
+        import winsdk.windows.graphics.imaging as imaging
+        from winsdk.windows.storage import StorageFile, FileAccessMode
+    except ImportError:
+        return ""
+
+    async def _recognize():
+        file = await StorageFile.get_file_from_path_async(str(image_path))
+        stream = await file.open_async(FileAccessMode.READ)
+        decoder = await imaging.BitmapDecoder.create_async(stream)
+        bitmap = await decoder.get_software_bitmap_async()
+        engine = ocr.OcrEngine.try_create_from_user_profile_languages()
+        if engine is None:
+            return ""
+        result = await engine.recognize_async(bitmap)
+        return result.text or ""
+
+    try:
+        return asyncio.run(_recognize())
+    except Exception:
+        return ""
+
+
+def ocr_image(image_path):
+    """OCR 图片文字识别。按操作系统选择方案：
+    - macOS: Vision 框架（osascript，系统原生，零模型下载）
+    - Windows: Windows.Media.Ocr（winsdk，系统原生，零模型下载）
+    - Linux/其他: 返回空串（走音轨转写兜底）
+    返回识别文字，无文字或不支持时返回空串。
+    """
+    system = platform.system()
+    if system == "Darwin":
+        return _ocr_macos(image_path)
+    elif system == "Windows":
+        return _ocr_windows(image_path)
+    else:
         return ""
 
 

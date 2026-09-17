@@ -4,8 +4,10 @@
 
 import argparse
 import json
+import platform
 import re
 import subprocess
+import sys
 import time
 from datetime import datetime
 from pathlib import Path
@@ -35,7 +37,10 @@ def run_cmd(cmd, timeout=30):
 
 
 def send_message(to, message, confirm=True, no_verify=False):
-    """发送消息到指定聊天对象。使用已验证的 send_message.sh（Cmd+F方案）。"""
+    """发送消息到指定聊天对象。按操作系统选择后端：
+    - macOS: wechat-ui/send_message.sh（AppleScript + 辅助功能）
+    - Windows: wechat-ui-win/send_message.py（pywinauto uia backend）
+    """
     result = {
         "success": False, "recipient": to, "message": message,
         "timestamp": datetime.now().isoformat(), "error": None
@@ -49,9 +54,17 @@ def send_message(to, message, confirm=True, no_verify=False):
         result["confirm_required"] = True
         return result
     try:
-        script_path = Path(__file__).parent / "wechat-ui" / "send_message.sh"
-        # 用 list 参数 + shell=False，避免 to/message 含引号或 $() 时的 shell 注入
-        cmd_args = ["bash", str(script_path), to, message]
+        system = platform.system()
+        if system == "Darwin":
+            script_path = Path(__file__).parent / "wechat-ui" / "send_message.sh"
+            # 用 list 参数 + shell=False，避免 to/message 含引号或 $() 时的 shell 注入
+            cmd_args = ["bash", str(script_path), to, message]
+        elif system == "Windows":
+            script_path = Path(__file__).parent / "wechat-ui-win" / "send_message.py"
+            cmd_args = [sys.executable, str(script_path), to, message]
+        else:
+            result["error"] = f"unsupported platform: {system}"
+            return result
         if no_verify:
             cmd_args.append("--no-verify")
         proc = subprocess.run(cmd_args, capture_output=True, text=True, timeout=60)
@@ -60,7 +73,7 @@ def send_message(to, message, confirm=True, no_verify=False):
             result["success"] = True
             result["stdout"] = stdout[-500:]
             return result
-        result["error"] = f"send_message.sh failed (code={code}): {stderr[-200:] if stderr else stdout[-200:]}"
+        result["error"] = f"send failed (code={code}): {stderr[-200:] if stderr else stdout[-200:]}"
         return result
     except Exception as e:
         result["error"] = str(e)
