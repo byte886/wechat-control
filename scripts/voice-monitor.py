@@ -43,30 +43,34 @@ SILK_DECODER = SKILL_DIR / "tools/silk-v3-decoder/converter.sh"
 
 
 def get_wechat_files_dir():
-    """获取微信数据根目录（xwechat_files/），跨平台兼容。
-    优先从 ~/.wx-cli/config.json 的 db_dir 推导（db_dir.parent.parent）；
-    读不到时按系统默认路径兜底（macOS / Windows / Linux）。
+    """获取微信数据根目录（xwechat_files/）。
+    先判断操作系统，再按系统选择方案：每个系统内优先从 wx-cli 配置推导，失败用系统默认路径。
     """
-    if WX_CLI_CONFIG.exists():
-        try:
-            cfg = json.loads(WX_CLI_CONFIG.read_text())
-            db_dir = cfg.get("db_dir", "")
-            if db_dir:
-                derived = Path(db_dir).parent.parent
-                if derived.exists():
-                    return derived
-        except (json.JSONDecodeError, OSError):
-            pass
     system = platform.system()
+
+    def _from_config():
+        if WX_CLI_CONFIG.exists():
+            try:
+                cfg = json.loads(WX_CLI_CONFIG.read_text())
+                db_dir = cfg.get("db_dir", "")
+                if db_dir:
+                    derived = Path(db_dir).parent.parent
+                    if derived.exists():
+                        return derived
+            except (json.JSONDecodeError, OSError):
+                pass
+        return None
+
     if system == "Darwin":
-        return Path.home() / "Library/Containers/com.tencent.xinWeChat/Data/Documents/xwechat_files"
+        return _from_config() or Path.home() / "Library/Containers/com.tencent.xinWeChat/Data/Documents/xwechat_files"
     elif system == "Windows":
-        win_path = Path.home() / "Documents" / "xwechat_files"
-        if win_path.exists():
-            return win_path
-        return Path.home() / "Documents" / "WeChat Files"
+        cfg_dir = _from_config()
+        if cfg_dir:
+            return cfg_dir
+        win_v4 = Path.home() / "Documents" / "xwechat_files"
+        return win_v4 if win_v4.exists() else Path.home() / "Documents" / "WeChat Files"
     else:
-        return Path.home() / "xwechat_files"
+        return _from_config() or Path.home() / "xwechat_files"
 
 # FunASR (SenseVoiceSmall) 解释器解析顺序（不硬编码其他会话的 venv 路径）：
 #   1. 环境变量 FUNASR_PYTHON

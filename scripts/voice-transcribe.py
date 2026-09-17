@@ -41,35 +41,37 @@ SILK_DECODER = SKILL_DIR / "tools/silk-v3-decoder/converter.sh"
 
 
 def get_wechat_files_dir():
-    """获取微信数据根目录（xwechat_files/），跨平台兼容。
-    优先从 ~/.wx-cli/config.json 的 db_dir 推导（db_dir.parent.parent）；
-    读不到时按系统默认路径兜底（macOS / Windows / Linux）。
+    """获取微信数据根目录（xwechat_files/）。
+    先判断操作系统，再按系统选择方案：每个系统内优先从 wx-cli 配置推导，失败用系统默认路径。
     """
-    # 1. 优先从配置推导（跨平台，wx-cli 在各平台都写这个配置）
-    if WX_CLI_CONFIG.exists():
-        try:
-            cfg = json.loads(WX_CLI_CONFIG.read_text())
-            db_dir = cfg.get("db_dir", "")
-            if db_dir:
-                # db_dir = .../xwechat_files/<wxid>/db_storage
-                # parent.parent = .../xwechat_files/
-                derived = Path(db_dir).parent.parent
-                if derived.exists():
-                    return derived
-        except (json.JSONDecodeError, OSError):
-            pass
-    # 2. 按系统默认路径兜底
     system = platform.system()
+
+    # 通用：从 wx-cli 配置推导（各平台都写 ~/.wx-cli/config.json，最准确）
+    def _from_config():
+        if WX_CLI_CONFIG.exists():
+            try:
+                cfg = json.loads(WX_CLI_CONFIG.read_text())
+                db_dir = cfg.get("db_dir", "")
+                if db_dir:
+                    derived = Path(db_dir).parent.parent  # db_storage 的父父目录 = xwechat_files
+                    if derived.exists():
+                        return derived
+            except (json.JSONDecodeError, OSError):
+                pass
+        return None
+
+    # 按系统选择方案
     if system == "Darwin":
-        return Path.home() / "Library/Containers/com.tencent.xinWeChat/Data/Documents/xwechat_files"
+        return _from_config() or Path.home() / "Library/Containers/com.tencent.xinWeChat/Data/Documents/xwechat_files"
     elif system == "Windows":
-        # 微信 4.x Windows：文档\xwechat_files\；3.x 可能是 文档\WeChat Files\
-        win_path = Path.home() / "Documents" / "xwechat_files"
-        if win_path.exists():
-            return win_path
-        return Path.home() / "Documents" / "WeChat Files"
+        cfg_dir = _from_config()
+        if cfg_dir:
+            return cfg_dir
+        # 微信 4.x：文档\xwechat_files\；3.x：文档\WeChat Files\
+        win_v4 = Path.home() / "Documents" / "xwechat_files"
+        return win_v4 if win_v4.exists() else Path.home() / "Documents" / "WeChat Files"
     else:
-        return Path.home() / "xwechat_files"
+        return _from_config() or Path.home() / "xwechat_files"
 
 
 WECHAT_FILES = get_wechat_files_dir()
