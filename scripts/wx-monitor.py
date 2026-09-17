@@ -77,6 +77,35 @@ def run_wx(args, timeout=30):
         return {"error": str(e)}
 
 
+def transcribe_voice(local_id):
+    """语音消息自动转文字（监控推送时调用）。
+    复用 voice-transcribe.py 的 SILK→WAV→FunASR 全链路。
+    FunASR 未配置时返回提示字符串，不影响推送。
+    """
+    try:
+        import importlib.util as _ilu
+        import tempfile as _tf
+        vt_path = Path(__file__).parent / "voice-transcribe.py"
+        spec = _ilu.spec_from_file_location("voice_transcribe", str(vt_path))
+        vt = _ilu.module_from_spec(spec)
+        spec.loader.exec_module(vt)
+        vt.load_keys()
+
+        with _tf.TemporaryDirectory() as tmpdir:
+            silk_path = Path(tmpdir) / f"voice_{local_id}.silk"
+            wav_path = Path(tmpdir) / f"voice_{local_id}.wav"
+            if not vt.extract_voice_blob(vt.get_media_db_path(), local_id, silk_path):
+                return None
+            if not vt.silk_to_wav(silk_path, wav_path):
+                return None
+            text = vt.transcribe_wav(str(wav_path))
+            if text and not text.startswith("[识别失败"):
+                return text
+            return None
+    except Exception:
+        return None
+
+
 def load_config():
     """加载配置，不存在则创建默认配置"""
     if not CONFIG_FILE.exists():
@@ -246,7 +275,17 @@ def format_push_message(msg, reason, chat_name):
     elif msg_type == "视频":
         type_hint = "[视频，需在微信查看] "
     elif msg_type == "语音":
-        type_hint = "[语音，需在微信收听] "
+        # 自动转写语音（M-12）
+        local_id = msg.get("local_id", "")
+        if local_id:
+            transcript = transcribe_voice(local_id)
+            if transcript:
+                content = f"[语音转写] {transcript}"
+                type_hint = ""
+            else:
+                type_hint = "[语音，转写失败或未配置FunASR] "
+        else:
+            type_hint = "[语音，需在微信收听] "
     elif msg_type == "位置":
         type_hint = "[位置] "
     elif msg_type == "名片":

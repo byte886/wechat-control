@@ -241,8 +241,13 @@ def get_session_table_name(wxid):
 # ============================================================
 
 def collect_all_messages(since_time=0, chat_filter=None, type_filter=None, limit=100):
-    """从所有 message 数据库采集消息元数据"""
+    """从所有 message 数据库采集消息元数据。
+    chat_filter: 会话 wxid，只导出该会话的消息（表名 Msg_<md5(wxid)>）。
+    """
     all_messages = []
+
+    # 如果指定了会话过滤，计算目标表名
+    target_table = get_session_table_name(chat_filter) if chat_filter else None
 
     for db_name in ["message_0", "message_1", "message_2"]:
         db_key = MSG_DB_KEYS.get(db_name)
@@ -255,6 +260,9 @@ def collect_all_messages(since_time=0, chat_filter=None, type_filter=None, limit
             "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'Msg_%';")
 
         for table_name in tables:
+            # 会话过滤：只处理目标表
+            if target_table and table_name != target_table:
+                continue
             # 构建查询条件
             where = ["1=1"]
             if since_time > 0:
@@ -921,6 +929,14 @@ def export_image(msg, output_dir):
         if r.returncode == 0 and out_path.exists():
             size = out_path.stat().st_size
             note = '高清原图' if size > 100000 else ('标准' if size > 10000 else '缩略图')
+            # 图片 OCR：识别图片中的文字
+            ocr_text = ocr_image(out_path)
+            if ocr_text:
+                ocr_path = out_dir / f"img_{msg['local_id']}_ocr.txt"
+                ocr_path.write_text(ocr_text, encoding='utf-8')
+                note += f' + OCR({len(ocr_text)}字)'
+                return {'status': 'ok', 'path': str(out_path), 'size': size, 'note': note,
+                        'ocr': ocr_text, 'ocr_path': str(ocr_path)}
             return {'status': 'ok', 'path': str(out_path), 'size': size, 'note': note}
         err = r.stderr.decode(errors='replace').strip()[:120]
         return {'status': 'fail', 'reason': err or 'wx extract 返回非零'}
@@ -1247,7 +1263,7 @@ def export_merged_record(msg, output_dir, transcode=False):
 
     results = []
     # 图片子消息（datatype=2）：fullmd5 标签
-    for i, m in enumerate(re.finditer(r'<dataitem[^>]*datatype="2"[^>]*>(.*?)</dataitem>', raw, re.DOTALL)):
+    for i, m in enumerate(_re.finditer(r'<dataitem[^>]*datatype="2"[^>]*>(.*?)</dataitem>', raw, _re.DOTALL)):
         fullmd5 = _xml_get(m.group(1), 'fullmd5')
         if fullmd5:
             # 全局搜索 .dat 文件
@@ -1261,7 +1277,7 @@ def export_merged_record(msg, output_dir, transcode=False):
                 results.append({'type': '图片', 'status': 'skip',
                     'reason': '未缓存到本地（需在微信中点击查看原图后才能导出）'})
     # 视频子消息（datatype=4）：videomd5 或 md5
-    for m in re.finditer(r'<dataitem[^>]*datatype="4"[^>]*>(.*?)</dataitem>', raw, re.DOTALL):
+    for m in _re.finditer(r'<dataitem[^>]*datatype="4"[^>]*>(.*?)</dataitem>', raw, _re.DOTALL):
         vmd5 = _xml_get(m.group(1), 'videomd5') or _xml_get(m.group(1), 'md5')
         if vmd5:
             video_dir = WXCHAT_BASE / 'msg' / 'video'
@@ -1277,7 +1293,7 @@ def export_merged_record(msg, output_dir, transcode=False):
             else:
                 results.append({'type': '视频', 'status': 'skip', 'reason': '未下载到本地'})
     # 文件子消息（datatype=6）：filename
-    for m in re.finditer(r'<dataitem[^>]*datatype="6"[^>]*>(.*?)</dataitem>', raw, re.DOTALL):
+    for m in _re.finditer(r'<dataitem[^>]*datatype="6"[^>]*>(.*?)</dataitem>', raw, _re.DOTALL):
         fname = _xml_get(m.group(1), 'title') or _xml_get(m.group(1), 'filename')
         if fname:
             file_dir = WXCHAT_BASE / 'msg' / 'file'
@@ -1379,9 +1395,71 @@ def cmd_list_messages(since=None, chat=None, msg_type=None, limit=20):
     print()
 
 
-def cmd_stats():
-    """消息统计"""
+def cmd_stats(chat=None, limit=1000):
+    """消息统计。指定 --chat 时显示该会话的详细统计（类型分布/活跃时段/发送者排行）。"""
     load_keys()
+
+    if chat:
+        # 会话详细统计
+        messages = collect_all_messages(chat_filter=chat, limit=limit)
+        if not messages:
+            print(f"未找到会话 {chat} 的消息（可能 wxid 不正确，或消息数超过 limit={limit}）")
+            return
+
+        print("=" * 70)
+        print(f"会话统计: {chat}（扫描 {len(messages)} 条）")
+        print("=" * 70)
+
+        # 类型分布
+        type_dist = {}
+        for msg in messages:
+            t = msg.get("type_name", "?")
+            type_dist[t] = type_dist.get(t, 0) + 1
+        print(f"\n消息类型分布（共 {len(messages)} 条）:")
+        for t, c in sorted(type_dist.items(), key=lambda x: -x[1]):
+            pct = c / len(messages) * 100
+            print(f"  {t:<10} {c:>5} ({pct:>5.1f}%)")
+
+        # 活跃时段（按小时）
+        hour_dist = {}
+        for msg in messages:
+            try:
+                h = datetime.fromtimestamp(msg["create_time"]).hour
+                hour_dist[h] = hour_dist.get(h, 0) + 1
+            except Exception:
+                pass
+        if hour_dist:
+            print(f"\n活跃时段分布:")
+            for h in sorted(hour_dist.keys()):
+                bar = "█" * int(hour_dist[h] / max(hour_dist.values()) * 20)
+                print(f"  {h:02d}:00  {hour_dist[h]:>4}  {bar}")
+
+        # 发送者排行（需要解析消息获取 sender）
+        sender_dist = {}
+        for msg in messages[:200]:  # 最多解析200条获取发送者
+            try:
+                parsed = parse_message(msg)
+                sender = parsed.get("sender", "未知") if parsed else "未知"
+                sender_dist[sender] = sender_dist.get(sender, 0) + 1
+            except Exception:
+                pass
+        if sender_dist:
+            print(f"\n发送者排行（前 {min(len(sender_dist), 10)}）:")
+            for s, c in sorted(sender_dist.items(), key=lambda x: -x[1])[:10]:
+                print(f"  {s:<20} {c:>5} 条")
+
+        # 时间范围
+        if messages:
+            times = [m["create_time"] for m in messages if m.get("create_time")]
+            if times:
+                earliest = datetime.fromtimestamp(min(times)).strftime("%Y-%m-%d %H:%M")
+                latest = datetime.fromtimestamp(max(times)).strftime("%Y-%m-%d %H:%M")
+                print(f"\n时间范围: {earliest} ~ {latest}")
+
+        print()
+        return
+
+    # 全局统计（原有逻辑）
     stats = get_message_types_stats()
     voices = get_voice_messages(limit=1000)
 
@@ -1410,6 +1488,67 @@ def cmd_stats():
         for t, c in sorted(recent_types.items(), key=lambda x: x[1], reverse=True):
             print(f"  {t}: {c}")
 
+    print()
+
+
+def cmd_search(keyword, since=None, chat=None, limit=200):
+    """搜索历史消息中的关键词。收集消息→解析→在内容中匹配→显示结果。"""
+    load_keys()
+
+    since_time = 0
+    if since:
+        try:
+            since_time = int(datetime.strptime(since, "%Y-%m-%d").timestamp())
+        except ValueError:
+            print(f"❌ 日期格式错误: {since}，应为 YYYY-MM-DD", file=sys.stderr)
+            return
+
+    messages = collect_all_messages(since_time=since_time, chat_filter=chat, limit=limit)
+
+    print("=" * 90)
+    print(f"搜索关键词: \"{keyword}\"（扫描 {len(messages)} 条消息）")
+    if chat:
+        print(f"会话过滤: {chat}")
+    print("=" * 90)
+
+    matches = []
+    kw_lower = keyword.lower()
+
+    for msg in messages:
+        try:
+            raw = fetch_raw_content(msg)
+            parsed = parse_message(msg) if raw else None
+            content = parsed.get('content', '') if parsed else ''
+            # 搜索范围：解析内容 + 原始文本（文本消息 raw 就是内容）
+            search_text = f"{content} {raw if isinstance(raw, str) else ''}".lower()
+            if kw_lower in search_text:
+                matches.append((msg, parsed, content))
+        except Exception:
+            continue
+
+    if not matches:
+        print(f"未找到包含 \"{keyword}\" 的消息")
+        print()
+        return
+
+    print(f"找到 {len(matches)} 条匹配消息:")
+    print("-" * 90)
+    for i, (msg, parsed, content) in enumerate(matches, 1):
+        type_name = msg.get('type_name', '?')
+        time_str = msg.get('time_str', '')
+        sender = parsed.get('sender', '?') if parsed else '?'
+        # 内容截断，高亮关键词
+        display = content[:200].replace('\n', ' ')
+        # 简单高亮（大写标记）
+        idx = display.lower().find(kw_lower)
+        if idx >= 0:
+            display = display[:idx] + "【" + display[idx:idx+len(keyword)] + "】" + display[idx+len(keyword):]
+        print(f"[{i:3d}] {time_str} [{type_name}] {sender}")
+        print(f"      {display}")
+        print()
+
+    print("-" * 90)
+    print(f"共 {len(matches)} 条匹配（扫描 {len(messages)} 条）")
     print()
 
 
@@ -1583,7 +1722,7 @@ def cmd_parse(since=None, limit=20, msg_type=None, output_json=False, transcribe
     print()
 
 
-def cmd_export(output_dir="./wechat_exports", since=None, limit=20, msg_type=None, transcode=False):
+def cmd_export(output_dir="./wechat_exports", since=None, limit=20, msg_type=None, transcode=False, chat=None):
     """统一导出：收集最近消息，对可导出类型执行导出，输出清单"""
     load_keys()
 
@@ -1598,11 +1737,13 @@ def cmd_export(output_dir="./wechat_exports", since=None, limit=20, msg_type=Non
     out_path = Path(output_dir)
     out_path.mkdir(parents=True, exist_ok=True)
 
-    messages = collect_all_messages(since_time=since_time, type_filter=msg_type, limit=limit)
+    messages = collect_all_messages(since_time=since_time, chat_filter=chat, type_filter=msg_type, limit=limit)
 
     print("=" * 70)
     print(f"媒体导出（共扫描 {len(messages)} 条消息）")
     print(f"输出目录: {out_path.resolve()}")
+    if chat:
+        print(f"会话过滤: {chat}")
     if transcode:
         print("语音转 WAV: 已开启")
     print("=" * 70)
@@ -1657,7 +1798,16 @@ def main():
     list_parser.add_argument("--type", type=int, help="过滤消息类型（local_type）")
 
     # stats
-    subparsers.add_parser("stats", help="消息统计")
+    stats_parser = subparsers.add_parser("stats", help="消息统计（--chat 查看会话详细统计）")
+    stats_parser.add_argument("--chat", type=str, help="统计指定会话（wxid）")
+    stats_parser.add_argument("--limit", type=int, default=1000, help="扫描消息数（默认 1000）")
+
+    # search
+    search_parser = subparsers.add_parser("search", help="搜索历史消息中的关键词")
+    search_parser.add_argument("keyword", type=str, help="搜索关键词")
+    search_parser.add_argument("--limit", type=int, default=200, help="扫描最近 N 条消息（默认 200）")
+    search_parser.add_argument("--since", type=str, help="起始日期（YYYY-MM-DD）")
+    search_parser.add_argument("--chat", type=str, help="只搜索指定会话（wxid）")
 
     # monitor
     mon_parser = subparsers.add_parser("monitor", help="实时监控新消息")
@@ -1677,6 +1827,7 @@ def main():
     exp_parser.add_argument("--limit", type=int, default=20, help="处理最近 N 条消息")
     exp_parser.add_argument("--since", type=str, help="起始日期（YYYY-MM-DD）")
     exp_parser.add_argument("--type", type=int, help="只导出指定类型（local_type，如 3=图片 43=视频 34=语音）")
+    exp_parser.add_argument("--chat", type=str, help="只导出指定会话（wxid，如 wxid_xxx）")
     exp_parser.add_argument("--transcode", action="store_true", help="语音导出时自动转 WAV（SILK V3 → WAV）")
 
     args = parser.parse_args()
@@ -1695,7 +1846,14 @@ def main():
             limit=args.limit
         )
     elif args.command == "stats":
-        cmd_stats()
+        cmd_stats(chat=args.chat, limit=args.limit)
+    elif args.command == "search":
+        cmd_search(
+            keyword=args.keyword,
+            since=args.since,
+            chat=args.chat,
+            limit=args.limit,
+        )
     elif args.command == "monitor":
         cmd_monitor(interval=args.interval)
     elif args.command == "parse":
@@ -1713,6 +1871,7 @@ def main():
             limit=args.limit,
             msg_type=args.type,
             transcode=args.transcode,
+            chat=args.chat,
         )
 
 
