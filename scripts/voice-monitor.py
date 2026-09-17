@@ -26,6 +26,7 @@
 import argparse
 import json
 import os
+import platform
 import select
 import subprocess
 import sys
@@ -39,6 +40,33 @@ SKILL_DIR = Path(__file__).parent.parent
 WX_CLI_CONFIG = Path.home() / ".wx-cli/config.json"
 ALL_KEYS_PATH = Path.home() / ".wx-cli/all_keys.json"
 SILK_DECODER = SKILL_DIR / "tools/silk-v3-decoder/converter.sh"
+
+
+def get_wechat_files_dir():
+    """获取微信数据根目录（xwechat_files/），跨平台兼容。
+    优先从 ~/.wx-cli/config.json 的 db_dir 推导（db_dir.parent.parent）；
+    读不到时按系统默认路径兜底（macOS / Windows / Linux）。
+    """
+    if WX_CLI_CONFIG.exists():
+        try:
+            cfg = json.loads(WX_CLI_CONFIG.read_text())
+            db_dir = cfg.get("db_dir", "")
+            if db_dir:
+                derived = Path(db_dir).parent.parent
+                if derived.exists():
+                    return derived
+        except (json.JSONDecodeError, OSError):
+            pass
+    system = platform.system()
+    if system == "Darwin":
+        return Path.home() / "Library/Containers/com.tencent.xinWeChat/Data/Documents/xwechat_files"
+    elif system == "Windows":
+        win_path = Path.home() / "Documents" / "xwechat_files"
+        if win_path.exists():
+            return win_path
+        return Path.home() / "Documents" / "WeChat Files"
+    else:
+        return Path.home() / "xwechat_files"
 
 # FunASR (SenseVoiceSmall) 解释器解析顺序（不硬编码其他会话的 venv 路径）：
 #   1. 环境变量 FUNASR_PYTHON
@@ -81,8 +109,8 @@ def get_db_dir_from_config():
         except (json.JSONDecodeError, OSError):
             pass
 
-    # 回退：遍历 com.tencent.xinWeChat 下最新修改的账号目录
-    wechat_files = Path.home() / "Library/Containers/com.tencent.xinWeChat/Data/Documents/xwechat_files"
+    # 回退：遍历微信数据根目录下最新修改的账号目录（跨平台兼容）
+    wechat_files = get_wechat_files_dir()
     accounts = []
     if wechat_files.exists():
         for d in wechat_files.iterdir():

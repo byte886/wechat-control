@@ -21,6 +21,7 @@ import hashlib
 import html
 import json
 import os
+import platform
 import shutil
 import subprocess
 import sys
@@ -928,7 +929,12 @@ def export_image(msg, output_dir):
 
 
 def ocr_image(image_path):
-    """用 macOS Vision 框架做 OCR（复用技能内 ocr_wechat_screenshot.sh）。返回识别文字，无文字返回空串。"""
+    """用 macOS Vision 框架做 OCR（复用技能内 ocr_wechat_screenshot.sh）。
+    非 macOS 系统直接返回空串（OCR 为 macOS 专属，Windows/Linux 上走音轨转写兜底）。
+    返回识别文字，无文字返回空串。
+    """
+    if platform.system() != "Darwin":
+        return ""
     ocr_script = SKILL_DIR / "scripts" / "wechat-ui" / "ocr_wechat_screenshot.sh"
     if not ocr_script.exists():
         return ""
