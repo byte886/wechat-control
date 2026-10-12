@@ -1,4 +1,5 @@
 ---
+type: capability
 name: wechat-control
 description: "微信本地数据只读查询与 AI 总结技能。基于 wx-cli 解密本机微信 SQLite，支持会话列表、聊天历史、全文搜索、联系人、群成员、未读、统计、朋友圈、公众号、附件解密导出与语音转写；触发如'XX群最近聊了什么''搜关于XX的消息''有哪些未读''XX群有哪些人'。只读本地零风控；发消息/自动回复等写操作仅限小号且逐次明确确认，禁止大号及加删好友、朋友圈/公众号发布。"
 compatibility: "macOS (Intel/Apple Silicon) / Windows / Linux。微信版本锁定 ~4.1.8（wx-cli 硬限制，4.1.10+ 密钥存储格式变更会导致提取失败）。密钥提取需关 SIP（macOS）或管理员权限（Windows）；Windows/Linux 未实测。"
